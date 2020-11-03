@@ -1,0 +1,426 @@
+#!/usr/bin/env python
+
+import jinja2
+import yaml
+import collections
+import pysam
+import os
+import stat
+import time
+from pathlib import Path
+import phenotypes
+import argparse
+
+parser = argparse.ArgumentParser(description="""Render webpages to evaluate results of pbRUGD workflow""")
+parser.add_argument("pbRugdDir", metavar="D", type=str, \
+    help="Directory with pbRUGD workflow outputs", default=None)
+
+class Phenotype:
+    """Phenotype object
+        - hpoid: HPO term identifier (e.g. "HP:0003072")
+        - name: human-readable term (e.g. "hypercalcemia")
+        - definition: explanation of term (e.g. "An abnormally increased calcium concentration in the blood.")
+        - bodysystem: body system in which to organize the term
+        """
+    def __init__(self, hpoid, name, definition, bodysystem, genect):
+        self.hpoid = hpoid
+        self.name = name
+        self.definition = definition
+        self.bodysystem = bodysystem
+        self.genect = genect
+
+
+class Cohort:
+    """Cohort object
+        - project: project who provided the cohort
+        - cohortid: string identifier
+        - title: description of cohort
+        - notes: list of free-text notes
+        - affecteds: list of Sample objects
+        - unaffecteds: list of Sample objects
+    """
+    def __init__(self, yamlobj, project, phenotyper):
+        self.project = project
+        self.cohortid = yamlobj["id"]
+        self.group = self.cohortid
+        self.title = yamlobj.get("title","")
+        self.notes = yamlobj.get("notes", [])
+        self.solved = yamlobj.get("solved", "")
+        self.igv = False
+        for diseasestatus in ("affecteds", "unaffecteds"):
+            setattr(self, diseasestatus, [])
+            for s in yamlobj.get(diseasestatus, []):
+                getattr(self, diseasestatus).append(Sample(s))
+
+        hpoids = set(yamlobj.get("phenotypes", []))
+        nonredundanthpoids =  phenotyper.pruneTerms(phenotyper.term_ancestor_closure(hpoids)) # prune redundant terms
+        self.phenotypes = []
+        for hpoid in nonredundanthpoids:
+            hpotermdict = phenotyper.hpoTermDict(hpoid)
+            self.phenotypes.append(Phenotype(hpoid, hpotermdict["name"], hpotermdict["defn"], hpotermdict["system"], hpotermdict["genesWithTerm"]))
+
+        # Group phenotypes by body system, sorting from most- to least-specific phenotype within a body system.
+        self.bodysystems = collections.OrderedDict()
+        for bodysystem in phenotypes.BodySystems:
+            self.bodysystems[bodysystem] = []
+        for phenotype in self.phenotypes:
+            self.bodysystems[phenotype.bodysystem].append(phenotype)
+        for bodysystem in phenotypes.BodySystems:
+            if len(self.bodysystems[bodysystem]) == 0:
+                del self.bodysystems[bodysystem]
+            else:
+                self.bodysystems[bodysystem] = list(sorted(self.bodysystems[bodysystem], key=lambda p: p.genect))
+
+
+class Sample:
+    """Sample object
+        - sampleid: string identifier
+        - sex: { MALE, FEMALE, "" }
+    """
+    def __init__(self, yamlobj):
+        self.sampleid = yamlobj["id"]
+        self.sex = yamlobj.get("sex","").upper()
+        self.confirmed = yamlobj.get("confirmed", "")
+        self.inferredsex = ""
+        self.sexstatus = ""
+        self.diseasestatus = ""
+        self.kmerconsistent = ""
+        assert self.sex in ("MALE", "FEMALE", "")
+        self.parents = yamlobj.get("parents", [])
+        self.runs = []
+        self.smrtcells = []
+        self.processed_smrtcells = 0
+        self.project = "unassigned"
+        self.cohortgroup = "singleton"
+        self.done = bool(yamlobj.get("done", False))
+        self.gccoverage_dist = []
+        self.gcbalance = 1.0
+
+
+class SmrtCell:
+    def __init__(self, moviename, sample):
+        self.moviename = moviename
+        self.project = "unassigned"
+        self.sample = sample
+        self.basecaller = ""
+        self.statedsex = ""
+        self.inferredsex = ""
+        self.hifireads = 0
+        self.hifiyield = 0
+        self.hifireadlength = 0
+        self.hifireadquality = 0
+        self.meankinetics = False
+        self.totalyield = 0
+        self.umy = 0
+        self.p0 = 0
+        self.p1 = 0
+        self.p2 = 0
+        self.zmws = 0
+        self.tau1 = 0
+        self.tau2 = 0
+        self.tau3 = 0
+        self.tauRC = 0
+        self.adapter_terminations1 = 0
+        self.adapter_terminations2 = 0
+        self.fileageinhrs = 0
+
+        self.hifireadlen_dist = []
+        self.hifireadqual_dist = []
+        self.gccoverage_dist = []
+        self.gcbalance = 1.0
+
+
+class Run:
+    def __init__(self, uuid, date, status):
+        self.uuid = uuid
+        self.date = date
+        self.status = status
+
+
+def main():
+    args = parser.parse_args()
+    now = time.time()
+
+    ## Load HPO terms and annotations
+    terms=os.path.join("./hpo/hpoTerms.txt")
+    annotations=os.path.join("./hpo/ensembl.hpoPhenotype.tsv")
+    ontology=os.path.join("./hpo/hpoDag.txt")
+    phenotyper = phenotypes.Phenotyper(terms, ontology, annotations)
+
+    ## Load the cohort and sample descriptions
+    cohorts = []
+    samples = dict() # sample name to sample object
+    f = open("./cohorts.yaml" % (project))
+    yamlcohorts = yaml.load("".join(f))
+    for yamlcohort in yamlcohorts:
+        cohort = Cohort(yamlcohort, project, phenotyper)
+        cohorts.append(cohort)
+        for diseasestatus in ("affecteds", "unaffecteds"):
+            for s in getattr(cohort, diseasestatus):
+                s.diseasestatus = diseasestatus[:-1]
+                samples[s.sampleid] = s
+    f.close()
+
+    # separate the singletons
+    singletons = []
+    multisamples = []
+    for cohort in cohorts:
+        if len(cohort.affecteds) + len(cohort.unaffecteds) == 1:
+            cohort.group = "singletons"
+            singletons.append(cohort)
+        else:
+            multisamples.append(cohort)
+    cohorts = singletons + multisamples
+
+    ## Load Run information
+    f = open("%s/rundesigns/runsamplestatus.csv" % (args.pbRugdDir))
+    for l in f:
+        runuuid,date,sample,status = l.rstrip("\n").split(",")
+        if sample in samples:
+            samples[sample].runs.append(Run(uuid=runuuid, date=date.replace("-","/"), status=status))
+    f.close()
+
+    ## Load SMRT Cell information
+    movie2basecaller = dict()
+    f = open("%s/smrtcells/basecaller.csv" % (args.pbRugdDir))
+    for l in f:
+        movie,basecaller = l.rstrip("\n").split(",")
+        movie2basecaller[movie] = basecaller
+
+    movie2productivity = dict()
+    f = open("%s/smrtcells/productivity.csv" % (args.pbRugdDir))
+    for l in f:
+        movie,oplc,totalyield,umy,p0,p1,p2,pother = l.rstrip("\n").split(",")
+        movie2productivity[movie] = [int(s) for s in (oplc,totalyield,umy,p0,p1,p2,pother)]
+
+    smrtcells = []
+    smrtcelldir = Path("%s/smrtcells/ready" % (args.pbRugdDir))
+    for ext in (".fastq", ".fastq.gz", ".ccs.bam"):
+        for scfile in [str(p) for p in smrtcelldir.glob("*/*%s" % (ext))]:
+            meankinetics = False
+            try:
+                if scfile.endswith(".ccs.bam"):
+                    b = pysam.AlignmentFile(scfile, check_sq=False)
+                    r = next(b)
+                    meankinetics = r.has_tag("fi") or r.has_tag("ri")
+            except:
+                pass
+
+            scfileparts = scfile[:-len(ext)].split("/")
+            sample,movie = scfileparts[-2:]
+            smrtcell = SmrtCell(movie, sample)
+            smrtcell.fileageinhrs = (now - os.stat(scfile)[stat.ST_CTIME]) / 3600
+            smrtcell.basecaller = movie2basecaller.get(movie, "")
+            smrtcell.rundiagnosticsid = movie2rundiagnosticsid.get(movie, "")
+            smrtcell.meankinetics = meankinetics
+            if movie in movie2productivity:
+                oplc,totalyield,umy,p0,p1,p2,pother = movie2productivity[movie]
+                smrtcell.oplc = oplc
+                smrtcell.totalyield = totalyield
+                smrtcell.umy = umy
+                smrtcell.p0 = p0
+                smrtcell.p1 = p1
+                smrtcell.p2 = p2
+                smrtcell.zmws = p0+p1+p2+pother
+            if sample in samples:
+                smrtcell.statedsex = samples[sample].sex
+                samples[sample].smrtcells.append(smrtcell)
+            smrtcells.append(smrtcell)
+
+
+    # Read length and quality summary statistics
+    for smrtcell in smrtcells:
+        try:
+            rlsummary = open("%s/samples/%s/smrtcell_stats/%s.read_length_summary.tsv" % (args.pbRugdDir, smrtcell.sample, smrtcell.moviename))
+            rldist = []
+            hifiyield = 0
+            hifireads = 0
+            for l in rlsummary:
+                (rlbin, rlbincount, rlbinyield) = [int(s) for s in l.rstrip("\n").split()]
+                hifiyield += rlbinyield
+                hifireads += rlbincount
+                rldist.append({ "bin": rlbin, "count": rlbincount, "yield": rlbinyield })
+            smrtcell.hifiyield = hifiyield
+            smrtcell.hifireadlength = hifiyield / hifireads
+            smrtcell.hifireadlen_dist = "[%s]" % (",".join(["{bin: %d, count: %d, yield: %d}" % (e["bin"], e["count"], e["yield"]) for e in rldist]))
+            smrtcell.hifireads = hifireads
+        except:
+            pass
+
+        try:
+            rqsummary = open("%s/samples/%s/smrtcell_stats/%s.read_quality_summary.tsv" % (args.pbRugdDir, smrtcell.sample, smrtcell.moviename))
+            rqdist = []
+            hifireads = 0
+            for l in rqsummary:
+                (rqbin, rqbincount, rqbinyield) = [int(s) for s in l.rstrip("\n").split()]
+                if rqbin >= 20:
+                    rqdist.append({ "bin": rqbin, "count": rqbincount, "yield": rqbinyield })
+                    hifireads += rqbincount
+            smrtcell.hifireadqual_dist = "[%s]" % (",".join(["{bin: %d, count: %d, yield: %d}" % (e["bin"], e["count"], e["yield"]) for e in rqdist]))
+            # Calculate median read quality
+            s = 0
+            for x in rqdist:
+                s += x["count"]
+                if 2*s >= hifireads:
+                    smrtcell.hifireadquality = x["bin"]
+                    break
+        except:
+            pass
+
+    # Coverage, [GC] coverage, and inferred sex
+    for smrtcell in smrtcells:
+        try:
+            f = open("%s/samples/%s/mosdepth/%s.GRCh38.mosdepth.inferred_sex.txt" % (args.pbRugdDir, smrtcell.sample, smrtcell.moviename))
+            next(f)
+            l = next(f)
+            X_Y,infer_X_Y,X_2,infer_X_2 = l.rstrip().split()
+            if infer_X_Y != infer_X_2:
+                smrtcell.inferredsex = "INCONSISTENT"
+            else:
+                smrtcell.inferredsex = infer_X_Y
+
+            if smrtcell.sample in samples:
+                if samples[smrtcell.sample].inferredsex:
+                    if samples[smrtcell.sample].inferredsex != smrtcell.inferredsex:
+                        samples[smrtcell.sample].inferredsex = "INCONSISTENT"
+                else:
+                    samples[smrtcell.sample].inferredsex = smrtcell.inferredsex
+        except:
+            pass
+
+        try:
+            f = open("%s/samples/%s/mosdepth/%s.GRCh38.gc_coverage.summary.txt" % (args.pbRugdDir, smrtcell.sample, smrtcell.moviename))
+            next(f)
+            for l in f:
+                cols = l.rstrip().split(",")
+                if int(cols[4]) >= 100: # keep bins with count >= 100
+                    smrtcell.gccoverage_dist.append({ "bin": float(cols[0]), "q1": float(cols[1]), "median": float(cols[2]), "q3": float(cols[3]), "count": int(cols[4])})
+            medians = list([x["median"] for x in smrtcell.gccoverage_dist])
+            smrtcell.gcbalance = 1.0 * min(medians) / max(medians)
+        except:
+            pass
+
+    for sample in samples.values():
+        if not sample.sex or not sample.inferredsex:
+            sample.sexstatus = ""
+        else:
+            sample.sexstatus = "CONSISTENT" if (sample.sex == sample.inferredsex) else "INCONSISTENT"
+
+    # Kmer consistency of SMRT Cells for a sample
+    for sample in samples.values():
+        try:
+            f = open("%s/samples/%s/jellyfish/%s.kmerconsistency.txt" % (args.pbRugdDir, sample.sampleid, sample.sampleid))
+            l = next(f) # skip header line
+            kmerconsistent = True
+            for l in f:
+                movie1,movie2,adjusted_nonref_inconsistency,consistent = l.rstrip("\n").split("\t")
+                if consistent == "NO":
+                    kmerconsistent = False
+
+            sample.kmerconsistent = "CONSISTENT" if kmerconsistent else "INCONSISTENT"
+        except:
+            pass
+
+    # Sample-level [GC] coverage
+    for sample in samples.values():
+        try:
+            f = open("%s/samples/%s/mosdepth/%s.GRCh38.gc_coverage.summary.txt" % (args.pbRugdDir, sample.sampleid, sample.sampleid))
+            next(f)
+            for l in f:
+                cols = l.rstrip().split(",")
+                if int(cols[4]) >= 100: # keep bins with count >= 100
+                    sample.gccoverage_dist.append({ "bin": float(cols[0]), "q1": float(cols[1]), "median": float(cols[2]), "q3": float(cols[3]), "count": int(cols[4])})
+            medians = list([x["median"] for x in sample.gccoverage_dist])
+            sample.gcbalance = 1.0 * min(medians) / max(medians)
+        except:
+            pass
+
+    ## Load file import errors
+    f = open("%s/smrtcells/importerrors.yaml" % (args.pbRugdDir))
+    importerrors = yaml.load("".join(f))
+    f.close()
+    if importerrors is None:
+        importerrors = []
+
+
+    ## Render dashboard templates
+    env = jinja2.Environment()
+    env.loader = jinja2.FileSystemLoader(".")
+
+    ## Sample dashboard
+    template = env.get_template("samples.jinja")
+    fn = "%s/www/index.html" % (args.pbRugdDir)
+    try:
+        os.makedirs(os.path.dirname(fn))
+    except:
+        pass
+    # Concatenate the affected and unaffected lists for each cohort
+    # Assign the project to SMRT Cell
+    for cohort in cohorts:
+        cohort.samples = cohort.affecteds + cohort.unaffecteds
+        for sample in cohort.samples:
+            sample.project = cohort.project
+            for smrtcell in sample.smrtcells:
+                smrtcell.project = sample.project
+        try:
+            fslivar = open("%s/cohorts/%s/slivar/%s.GRCh38.deepvariant.phased.slivar.tsv" % (args.pbRugdDir, cohort.cohortid, cohort.cohortid), "r")
+            cohort.igv = bool(cohort.samples)
+        except:
+            pass
+    # Sum the HiFi yield per sample
+    for sample in samples.values():
+        sample.hifiyield = 0
+        for smrtcell in sample.smrtcells:
+            sample.hifiyield += smrtcell.hifiyield
+        sample.processed_smrtcells = len([s for s in sample.smrtcells if s.hifiyield > 0])
+
+    fdash = open(fn, "w")
+    fdash.write(template.render(cohorts=cohorts, samples=samples, importerrors=importerrors))
+    fdash.close()
+
+    ## Cohort IGV sessions
+    template = env.get_template("cohortigvxml.jinja")
+    try:
+        os.makedirs(os.path.dirname(fn))
+    except:
+        pass
+    for cohort in cohorts:
+        if not cohort.igv:
+            continue
+        fn = "%s/cohorts/%s/%s_igv.xml" % (args.pbRugdDir, cohort.cohortid, cohort.cohortid)
+        try:
+            os.makedirs(os.path.dirname(fn))
+        except:
+            pass
+        figv = open(fn, "w")
+        figv.write(template.render(cohort=cohort, firstsample=cohort.samples[0]))
+        figv.close()
+
+    ## Cohort reports
+    template = env.get_template("cohort.jinja")
+    for cohort in cohorts:
+        cohortdir = "%s/www/cohorts/%s" % (args.pbRugdDir, cohort.cohortid)
+        try:
+            os.makedirs(cohortdir)
+        except:
+            pass
+        fcohort = open("%s/index.html" % (cohortdir), "w")
+        fcohort.write(template.render(cohort=cohort))
+        fcohort.close();
+
+    ## SMRT Cell dashboard
+    # Sort the smrtcells in reverse chronological order; group by sample.
+    smrtcells = list(sorted(smrtcells, key=lambda x: "".join(x.moviename.split("_")[1:]), reverse=True))
+
+    template = env.get_template("smrtcells.jinja")
+    fn = "%s/www/smrtcells/index.html" % (args.pbRugdDir)
+    try:
+        os.makedirs(os.path.dirname(fn))
+    except:
+        pass
+    fdash = open(fn, "w")
+    fdash.write(template.render(cohorts=cohorts, samples=samples, smrtcells=smrtcells))
+    fdash.close()
+
+if __name__ == "__main__":
+    main()

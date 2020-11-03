@@ -1,0 +1,739 @@
+{% extends "./base.jinja" %}
+
+{% block initialnavitems %}
+{% endblock %}
+
+{% block body %}
+
+<script>
+    var chartDefaults = {
+        yield: {
+            suffix: " Gb",
+            xbinscale: 1000,
+            scales: {
+                xAxes: [{ ticks: { stepSize: 5, max: 40 }, scaleLabel: { labelString: "Read length, kb" } }],
+                yAxes: [{ ticks: { stepSize: 5, max: 50 }, scaleLabel: { labelString: "Yield, Gb" } }]
+            }
+        },
+        readlength: {
+            suffix: " %",
+            xbinscale: 1000,
+            normalize: true,
+            scales: {
+                xAxes: [{ ticks: { stepSize: 5, max: 40 }, scaleLabel: { labelString: "Read length, kb" } }],
+                yAxes: [{ ticks: { stepSize: 5, max: 25 }, scaleLabel: { labelString: "Reads, %" } }]
+            }
+        },
+        readquality: {
+            suffix: " %",
+            xbinscale: 1,
+            normalize: true,
+            scales: {
+                xAxes: [{ ticks: { max: 50 }, scaleLabel: { labelString: "Read quality, Phred" } }],
+                yAxes: [{ ticks: { stepSize: 2, max: 8 }, scaleLabel: { labelString: "Reads, %" } }]
+            }
+        },
+        gccoverage: {
+            suffix: "",
+            xbinscale: 1,
+            normalize: true,
+            scales: {
+                xAxes: [{ ticks: { step: 2 }, scaleLabel: { labelString: "% [GC], 500 bp window" } }],
+                yAxes: [{ ticks: { stepSize: 50, max: 150 }, scaleLabel: { labelString: "Coverage, %" } }]
+            }
+        }
+    };
+
+    // Brewer.Category10 https://github.com/d3/d3-scale-chromatic/blob/master/README.md#categorical
+    var palette = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"];
+
+    function histogram(domElt, series, optionOverrides) {
+        optionOverrides = optionOverrides || {};
+
+        var datasets = [];
+
+        var paletteIx = 0;
+
+        for (var i = 0; i < series.length; i++) {
+            var s = series[i];
+            var sum = 0;
+            for (var j = 0; j < s.points.length; j++) { sum += s.points[j].y; }
+
+            var normalized = [];
+            for (var j = 0; j < s.points.length; j++) {
+                normalized.push({
+                    x: s.points[j].x / (optionOverrides.xbinscale || 1),
+                    y: (optionOverrides.normalize ? 100 * s.points[j].y / sum : s.points[j].y)
+                });
+            }
+
+            var color;
+            if (s.color) {
+                color = s.color;
+            }
+            else {
+                color = palette[paletteIx];
+                paletteIx = (paletteIx + 1) % palette.length;
+            }
+
+            datasets.push({
+                data: normalized,
+                label: s.label || "",
+                borderColor: color,
+                fill: optionOverrides.fill || false,
+                backgroundColor: color,
+                pointRadius: 0,
+                borderWidth: 1
+            });
+        }
+
+        var suffix = optionOverrides.suffix || "";
+
+        var options = {
+            animation: { duration: 0 },
+            responsive: true,
+            maintainAspectRatio: false,
+            title: { display: false },
+            legend: { display: false },
+            scales: {
+                yAxes: [{
+                    ticks: { fontSize: 6, min: 0, padding: 0 },
+                    gridLines: { color: "#eee", tickMarkLength: 2 },
+                    scaleLabel: { display: true, fontSize: 7, padding: 0 }
+                }],
+                xAxes: [{
+                    type: 'linear',
+                    ticks: { fontSize: 6, maxRotation: 0, padding: 0, stepSize: 5 },
+                    gridLines: { color: "#eee", tickMarkLength: 2, offsetGridLines: false },
+                    scaleLabel: { display: true, fontSize: 7, padding: 0 }
+                }]
+            },
+            tooltips: {
+                callbacks: {
+                    label: function(tooltipItem, data) {
+                        var label = (Math.round(tooltipItem.yLabel * 10) / 10 + suffix);
+                        return label;
+                    }
+                }
+            }
+        };
+
+        $.extend(true, options, optionOverrides);
+
+        new Chart(domElt, {
+            type: 'line',
+            options: options,
+            data: {
+                datasets: datasets
+            }
+        });
+    }
+
+    function gcboxplot(domElt, bins, series, optionOverrides) {
+        optionOverrides = optionOverrides || {};
+
+        var datasets = [];
+
+        var paletteIx = 0;
+        for (var i = 0; i < series.length; i++) {
+            var s = series[i];
+            var color;
+            if (s.color) {
+                color = s.color;
+            }
+            else {
+                color = palette[paletteIx];
+                paletteIx = (paletteIx + 1) % palette.length;
+            }
+
+            var middlebin = s.data[Math.floor(s.data.length / 2)];
+            var normfactor = middlebin[Math.floor(middlebin.length / 2)]; // normalize by median of middle bin
+            if (!optionOverrides.normalize || normfactor < 1) {
+                normfactor = 100;
+            }
+
+            var normalized = [];
+            for (var j = 0; j < s.data.length; j++) {
+                normalized.push($.map(s.data[j], function(x) { return 100 * x / normfactor; }));
+            }
+
+            datasets.push({
+                label: s.label || "",
+                data: normalized,
+                borderColor: color,
+                backgroundColor: "white",
+                borderWidth: 1,
+                itemRadius: 0,
+                borderWidth: 1
+            });
+        }
+
+        var suffix = optionOverrides.suffix || "";
+
+        var options = {
+            animation: { duration: 0 },
+            responsive: true,
+            maintainAspectRatio: false,
+            title: { display: false },
+            legend: { display: false },
+            scales: {
+                yAxes: [{
+                    ticks: { fontSize: 6, min: 0, padding: 0 },
+                    gridLines: { color: "#eee", tickMarkLength: 2 },
+                    scaleLabel: { display: true, fontSize: 7, padding: 0 }
+                }],
+                xAxes: [{
+                    ticks: { fontSize: 6, maxRotation: 0, padding: 0, stepSize: 5 },
+                    gridLines: { color: "#eee", tickMarkLength: 2, offsetGridLines: false },
+                    scaleLabel: { display: true, fontSize: 7, padding: 0 }
+                }]
+            },
+            tooltips: {
+                callbacks: {
+                    label: function(tooltipItem, data) {
+                        var label = (Math.round(tooltipItem.yLabel * 10) / 10 + suffix);
+                        return label;
+                    }
+                }
+            }
+        };
+
+        $.extend(true, options, optionOverrides);
+
+        new Chart(domElt, {
+            type: 'boxplot',
+            options: options,
+            data: {
+                labels: bins,
+                datasets: datasets
+            }
+        });
+    }
+
+    var dists = {};
+    dists.readlength = new Map();
+    dists.readquality = new Map();
+    dists.yield = new Map();
+    dists.gccoverage = new Map();
+
+    var movietosample = new Map();
+</script>
+
+<table class="table table-sm">
+  <thead>
+    <tr>
+      <th style="border-top: 0;">
+        <button type="button" class="btn btn-outline-primary btn-sm" id="overlayChartBtn" disabled
+         onclick="showOverlayCharts();" title="Plot overlay of selected movies"><i class="fa fa-bar-chart"></i></button>
+      </th>
+      <th colspan="6" style="border-top: 0;" class"text-right">
+        <div class="text-right">
+            <button type="button" class="btn btn-outline-primary btn-sm"
+             onclick="downloadSmrtcellStats();">Export <i class="fa fa-download"></i></button>
+        </div>
+      </th>
+    </tr>
+    <tr>
+      <th class="pb-0">
+        <input id="check-all" style="width: 25px; height: 25px;" type="checkbox">
+      </th>
+      <th>Movie <span class="small">and Sample</span></th>
+      <th><span data-toggle="tooltip" data-html="true" title="<div>Total</div><div class='small text-success'>&gt; 25 Gb</div><div class='small text-warning'>22.5 - 25 Gb</div><div class='small text-danger'>&lt; 22.5 Gb</div>">Yield</span></th>
+      <th><span data-toggle="tooltip" data-html="true" title="<div>Average</div><div class='small text-success'>&gt; 15 kb</div><div class='small text-warning'>12 - 15 kb</div><div class='small text-danger'>&lt; 12 kb</div>">Read length</span></th>
+      <th><span data-toggle="tooltip" data-html="true" title="<div>Median</div><div class='small text-success'>&ge; Q30</div><div class='small text-warning'>Q28-29</div><div class='small text-danger'>&lt; Q28</div>">Read quality</span></th>
+      <th><span data-toggle="tooltip" data-html="true" title="<div>Lowest:highest median coverage across [GC] bins</div><div class='small text-success'>&gt; 70%</div><div class='small text-warning'>50-70%</div><div class='small text-danger'>&lt; 50%</div><div>Plot normalizes by median of middle bin</div>">[GC] coverage</span></th>
+      <th><span data-toggle="tooltip" data-html="true" title="<div>P1</div><div><span class='small text-success'>&gt; 60%</span> <span class='small text-warning'>40-60%</span> <span class='small text-danger'>&lt; 40%</span></div><div>Pol read length</div><div><span class='small text-success'>&gt; 90 kb</span> <span class='small text-warning'>80-90 kb</span> <span class='small text-danger'>&lt; 80 kb</span></div><div>Tau</div><div><span class='small text-danger'>tau1 &lt; 30 kb</span><span class='small text-danger'>tauRC &lt; 180 kb</span></div>">Sequencing</span></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for cohort in cohorts %}
+    {% for sample in cohort.samples %}
+    {% if sample.smrtcells|length > 0 %}
+    <tr class="table-active small text-center">
+      <td colspan="7" class="pt-0 pb-0">
+        <a name="{{ cohort.cohortid }}"></a>
+        {{cohort.project }} /
+        {% if cohort.group == "singletons" %}
+        <a href="../cohorts/{{ cohort.cohortid }}"><strong>{{sample.sampleid}}</strong></a>
+        {% else %}
+        <a href="../cohorts/{{ cohort.cohortid }}">{{ cohort.group }}</a> / <strong>{{sample.sampleid}}</strong>
+        {% endif %}
+      </td>
+    </tr>
+    {% for smrtcell in sample.smrtcells %}
+    <script>
+        movietosample["{{smrtcell.moviename}}"] = "{{smrtcell.sample}}";
+    </script>
+    <tr>
+      <td {% if smrtcell.fileageinhrs < 48 %} class="border-left border-primary" style="border-width: 2px !important; border-top: 0;" {% endif %}>
+        {% if smrtcell.hifiyield > 0 %}
+        <div class="form-check">
+          <input class="form-check-input movie-check" id="check-{{smrtcell.moviename}}" style="width: 25px; height: 25px;" type="checkbox" movie="{{smrtcell.moviename}}">
+        </div>
+        {% endif %}
+      </td>
+      <td>
+        <label for="check-{{smrtcell.moviename}}">
+        <div {% if sample.smrtcells[0].fileageinhrs < 48 %} data-toggle="tooltip" title="New within past two days"{% endif %}>{{smrtcell.moviename}}</div>
+        <div class="small">
+            {{smrtcell.sample}}
+            {% if smrtcell.statedsex != "" %}<i class="fa fa-{{ 'male' if smrtcell.statedsex=='MALE' else 'female' if smrtcell.statedsex=='FEMALE' else 'question' }} {% if smrtcell.hifiyield %} {% if smrtcell.inferredsex != "" %} text-{{ 'danger' if smrtcell.statedsex != smrtcell.inferredsex else 'success'}} {% endif %} {% endif %}" data-toggle="tooltip" title="stated {{smrtcell.statedsex}}{% if smrtcell.inferredsex != "" %}, inferred {{smrtcell.inferredsex}} from X:Y coverage {% endif %}"></i>{% endif %}
+        </div>
+        {% if smrtcell.basecaller and smrtcell.basecaller != "9.0.0.92233" %}
+          <div class="small">
+          Basecaller
+            <span class="text-danger" data-toggle="tooltip" data-html="true" title="Correct basecaller is 9.0.0.92233">
+              {{ smrtcell.basecaller }}
+              <i class="fa fa-exclamation text-danger"></i>
+            <span>
+          </div>
+        {% endif %}
+        {% if smrtcell.meankinetics %}
+          <div class="small text-info">
+             Kinetics tags <i class="fa fa-info-circle" data-toggle="tooltip" data-html="true" title="CCS BAM includes mean pulse widths and IPDs. Calculating mean kinetics slows down CCS so it is usually disabled."></i>
+          </div>
+        {% endif %}
+        </label>
+      </td>
+      {% if smrtcell.hifiyield > 0 %}
+      <td>
+        <div class="small border-right border-{{'success' if smrtcell.hifiyield > 2.5e10 else 'danger' if smrtcell.hifiyield < 2.25e10 else 'warning'}}" style="border-width: 5px !important; display: inline-block; line-height: 1;">
+            <div class="pr-1 text-right text-dark text-bold bg-light border-left border-top border-bottom" style="min-width: {{ 80*smrtcell.hifiyield/3e10|round|int }}px;">{{(smrtcell.hifiyield/1e9)|round(1)}} Gb</div>
+        </div>
+
+        <div style="width: 100px;  background: white;" onclick='showLargeHistogram(dists.yield, ["{{smrtcell.moviename}}"], chartDefaults.yield );'>
+          <canvas id="{{smrtcell.moviename}}-yield" width="100" height="60"></canvas>
+          <script>
+            dists.readlength["{{smrtcell.moviename}}"] = {{smrtcell.hifireadlen_dist}};
+            (function () {
+                var runningyield = 0;
+                dists.yield["{{smrtcell.moviename}}"] = $.map(dists.readlength["{{smrtcell.moviename}}"], function(p) {
+                    runningyield += p.yield; return ({bin: p.bin, count: ({{smrtcell.hifiyield}}-runningyield+p.yield)/1e9 });
+                });
+
+                var options = chartDefaults.yield;
+                histogram(
+                    document.getElementById("{{smrtcell.moviename}}-yield"),
+                    [{ label: "{{smrtcell.moviename}}", points: $.map(dists.yield["{{smrtcell.moviename}}"], function(p) { return ({ x: p.bin, y: p.count  }); })}],
+                    options
+                );
+            })();
+          </script>
+        </div>
+      </td>
+      <td>
+        <div class="small border-right border-{{'success' if smrtcell.hifireadlength > 15000 else 'danger' if smrtcell.hifireadlength < 12000 else 'warning'}}" style="border-width: 5px !important; display: inline-block; line-height: 1;">
+            <div class="pr-1 text-right text-dark text-bold bg-light border-left border-top border-bottom" style="min-width: {{ 80*smrtcell.hifireadlength/20000|round|int }}px;">{{(smrtcell.hifireadlength/1e3)|round(1)}} kb</div>
+        </div>
+        <div style="width: 100px;  background: white;" onclick='showLargeHistogram(dists.readlength, ["{{smrtcell.moviename}}"], chartDefaults.readlength );'>
+          <canvas id="{{smrtcell.moviename}}-readlength" width="100" height="60"></canvas>
+          <script>
+            (function() {
+                var options = chartDefaults.readlength;
+                options.fill = true;
+                histogram(
+                    document.getElementById("{{smrtcell.moviename}}-readlength"),
+                    [{ label: "{{smrtcell.moviename}}", points: $.map(dists.readlength["{{smrtcell.moviename}}"], function(p) { return ({ x: p.bin, y: p.count }); })}],
+                    options
+                );
+            })();
+          </script>
+        </div>
+      </td>
+      <td>
+        <div class="small border-right border-{{'success' if smrtcell.hifireadquality >= 30 else 'danger' if smrtcell.hifireadquality < 28 else 'warning'}}" style="border-width: 5px !important; display: inline-block; line-height: 1;">
+            <div class="pr-1 text-right text-dark text-bold bg-light border-left border-top border-bottom" style="min-width: {{ 80*smrtcell.hifireadquality/30|round|int }}px;">Q{{(smrtcell.hifireadquality)|round|int}}</div>
+        </div>
+        <div style="width: 100px;  background: white;" onclick='showLargeHistogram(dists.readquality, ["{{smrtcell.moviename}}"], chartDefaults.readquality );'>
+          <canvas id="{{smrtcell.moviename}}-readquality" width="100" height="60"></canvas>
+          <script>
+            (function() {
+                dists.readquality["{{smrtcell.moviename}}"] = {{smrtcell.hifireadqual_dist}};
+
+                var options = chartDefaults.readquality;
+                options.fill = true;
+                histogram(
+                    document.getElementById("{{smrtcell.moviename}}-readquality"),
+                    [{ label: "{{smrtcell.moviename}}", points: $.map(dists.readquality["{{smrtcell.moviename}}"], function(p) { return ({ x: p.bin, y: p.count }); })}],
+                    options
+                );
+            })();
+          </script>
+        </div>
+      </td>
+      <td>
+        {% if smrtcell.gccoverage_dist|length > 0 %}
+        <div class="small border-right border-{{'success' if smrtcell.gcbalance > 0.7 else 'danger' if smrtcell.gcbalance < 0.5 else 'warning'}}" style="border-width: 5px !important; display: inline-block; line-height: 1;">
+            <div class="pr-1 text-right text-dark text-bold bg-light border-left border-top border-bottom" style="min-width: {{ 80*smrtcell.gcbalance|round|int }}px;">{{(100*smrtcell.gcbalance)|round|int}}%</div>
+        </div>
+        <div style="width: 100px;  background: white;" onclick='showLargeGcBoxplot(dists.gccoverage, ["{{smrtcell.moviename}}"], chartDefaults.gccoverage );'>
+          <canvas id="{{smrtcell.moviename}}-gccoverage" width="100" height="60"></canvas>
+          <script>
+            (function() {
+                dists.gccoverage["{{smrtcell.moviename}}"] = {{smrtcell.gccoverage_dist}};
+
+                var options = chartDefaults.gccoverage;
+                options.fill = true;
+                gcboxplot(
+                    document.getElementById("{{smrtcell.moviename}}-gccoverage"),
+                    $.map(dists.gccoverage["{{smrtcell.moviename}}"], function(p) { return (100*p.bin).toFixed(0); }),
+                    [{ label: "{{smrtcell.moviename}}", data: (function() {
+                        var data = [];
+                        for (var i = 0; i < dists.gccoverage["{{smrtcell.moviename}}"].length; i++) {
+                            var s = dists.gccoverage["{{smrtcell.moviename}}"][i];
+                            var iqr = s.q3 - s.q1;
+                            data.push([s.q1, s.median, s.q3])
+                        }
+                        return data;
+                     }()) }],
+                    options
+                );
+            })();
+          </script>
+        </div>
+        {% endif %}
+      </td>
+      <td>
+           {% if smrtcell.oplc %}
+           <div class="small">
+              <span data-toggle="tooltip" title="On-Plate Loading Concentration">OPLC {{smrtcell.oplc}} pM</span>
+           </div>
+           {% endif %}
+           {% if smrtcell.zmws %}
+           <div class="small">
+               <span class="text-{{'success' if smrtcell.p1/smrtcell.zmws > 0.6 else 'danger' if smrtcell.p1/smrtcell.zmws < 0.4 else 'warning'}}">{{(100*smrtcell.p1/smrtcell.zmws)|round(0)|int}}%</span> P1
+           </div>
+           {% endif %}
+           {% if smrtcell.totalyield and smrtcell.p1 %}
+           <div class="small">
+               <span class="text-{{'success' if smrtcell.totalyield/smrtcell.p1 > 9e4 else 'danger' if smrtcell.totalyield/smrtcell.p1 < 8e4 else 'warning'}}">{{(smrtcell.totalyield/smrtcell.p1/1e3)|round|int}} kb</span>
+               pol read length
+           </div>
+           <!--<div>
+               <div class="small border-right border-{{'success' if smrtcell.hifireads/smrtcell.p1 > 0.4 else 'danger' if smrtcell.hifireads/smrtcell.p1 < 0.3 else 'warning'}}" style="border-width: 5px !important; display: inline-block; line-height: 1;">
+                 <div class="pr-1 text-right text-dark text-bold bg-light border-left border-top border-bottom" style="min-width: {{ ((80/0.4)*smrtcell.hifireads/smrtcell.p1)|round|int }}px;">{{(100*smrtcell.hifireads/smrtcell.p1)|round(0)|int}}%</div>
+              </div>
+              <span class="small">HiFi/P1</span>
+           </div>-->
+           {% endif %}
+           {% if smrtcell.tau1 > 0 %}
+           <div class="small">
+              Tau 1&2: <span class="{{ 'text-danger' if smrtcell.tau1 < 30000 else '' }}">{{(smrtcell.tau1/1000)|round(0)|int}} kb</span>
+              &raquo;
+                   RC: <span class="{{ 'text-danger' if smrtcell.tauRC < 180000 else '' }}">{{(smrtcell.tauRC/1000)|round(0)|int}} kb</span>
+           </div>
+           <!--<div class="small">
+              Adapter Termination {{(100*smrtcell.adapter_terminations1)|round(0)|int}}% &raquo; {{(100*smrtcell.adapter_terminations2)|round(0)|int}}%
+           </div>-->
+           {% endif %}
+           {% if smrtcell.totalyield %}
+           <!--<div>
+               <div class="small border-right border-{{'success' if smrtcell.totalyield > 4e11 else 'danger' if smrtcell.totalyield < 3e11 else 'warning'}}" style="border-width: 5px !important; display: inline-block; line-height: 1;">
+                 <div class="pr-1 text-right text-dark text-bold bg-light border-left border-top border-bottom" style="min-width: {{ (80*smrtcell.totalyield/4e11)|round|int }}px;">{{(smrtcell.totalyield/1e9)|round(0)|int}} Gb</div>
+              </div>
+              <span class="small">raw yield</span>
+           </div>-->
+           {% endif %}
+      </td>
+      {% else %}
+      <td class="text-center align-middle" colspan="5">
+        <i class="fa fa-lg fa-spin fa-spinner"></i>
+      </td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+    {% endif %}
+    {% endfor %}
+    {% endfor %}
+  </tbody>
+</table>
+
+<!-- Chart modal -->
+<script>
+function showLargeHistogram(distmap, movies, optionOverrides) {
+    var usedmovies = {};
+
+    var series = [];
+    for (var i = 0; i < movies.length; i++) {
+        if (! usedmovies[movies[i]]) {
+            series.push({
+                label: movies[i],
+                points: $.map(distmap[movies[i]], function(p) { return ({ x: p.bin, y: p.count }) })
+            });
+            usedmovies[movies[i]] = true;
+        }
+    }
+
+    var largeChartOptions = {
+        legend: { display: false },
+        scales: {
+            yAxes: [{
+                ticks: { fontSize: 12 },
+                scaleLabel: { fontSize: 16 }
+            }],
+            xAxes: [{
+                ticks: { fontSize: 12 },
+                scaleLabel: { fontSize: 16 }
+            }]
+        }
+    };
+
+    $.extend(true, largeChartOptions, optionOverrides);
+
+    if (series.length > 1) {
+        largeChartOptions.fill = false;
+    }
+
+    // Add a legend
+    $("#modalChartLegend").empty();
+    var paletteIx = 0;
+    for (var i = 0; i < series.length; i++) {
+        $("#modalChartLegend").append('<li class="small list-inline-item" style="color: ' + palette[paletteIx] + ';"><i class="fa fa-lg fa-square"></i> ' + series[i].label + '</li>');
+        paletteIx = (paletteIx + 1) % palette.length;
+    }
+
+    var height = 240; // for legend: + 22 * Math.ceil(series.length / 2);
+    $("#modalChartWrapper").height(height).html('<canvas id="modalChart" width="480" height="' + height.toFixed() + '"></canvas>');
+    histogram(document.getElementById("modalChart"), series, largeChartOptions);
+    $("#chartModal").modal("show");
+}
+
+function showLargeGcBoxplot(distmap, movies, optionOverrides) {
+    var bins = $.map(distmap[movies[0]], function(p) { return (100*p.bin).toFixed(0); });
+    var usedmovies = {};
+
+    var series = [];
+    for (var i = 0; i < movies.length; i++) {
+        if (! usedmovies[movies[i]]) {
+            series.push({
+                label: movies[i],
+                data: (function() {
+                    var data = [];
+                    for (var j = 0; j < distmap[movies[i]].length; j++) {
+                        var s = distmap[movies[i]][j];
+                        data.push([s.q1, s.median, s.q3]);
+                    }
+                    return data;
+                })()
+            });
+            usedmovies[movies[i]] = true;
+        }
+    }
+
+    var largeChartOptions = {
+        legend: { display: false },
+        scales: {
+            yAxes: [{
+                ticks: { fontSize: 12 },
+                scaleLabel: { fontSize: 16 }
+            }],
+            xAxes: [{
+                ticks: { fontSize: 12 },
+                scaleLabel: { fontSize: 16 }
+            }]
+        }
+    };
+
+    $.extend(true, largeChartOptions, optionOverrides);
+
+    if (series.length > 1) {
+        largeChartOptions.fill = false;
+    }
+
+    // Add a legend
+    $("#modalChartLegend").empty();
+    var paletteIx = 0;
+    for (var i = 0; i < series.length; i++) {
+        $("#modalChartLegend").append('<li class="small list-inline-item" style="color: ' + palette[paletteIx] + ';"><i class="fa fa-lg fa-square"></i> ' + series[i].label + '</li>');
+        paletteIx = (paletteIx + 1) % palette.length;
+    }
+
+    var height = 240; // for legend: + 22 * Math.ceil(series.length / 2);
+    $("#modalChartWrapper").height(height).html('<canvas id="modalChart" width="480" height="' + height.toFixed() + '"></canvas>');
+    gcboxplot(document.getElementById("modalChart"), bins, series, largeChartOptions);
+    $("#chartModal").modal("show");
+}
+
+function showOverlayCharts(movies, optionOverrides) {
+    var usedmovies = {};
+    var movies = [];
+    $.map($(".movie-check"), function(e) {
+        if ($(e).prop("checked")) {
+            var movie = $(e).attr("movie");
+            if (! usedmovies[movie]) {
+                movies.push(movie);
+                usedmovies[movie] = true;
+            }
+        }
+    });
+
+    var height = 240;
+    $("#overlayChartWrapper-yield").height(height).html('<canvas id="overlayChart-yield" width="480" height="' + height.toFixed() + '"></canvas>');
+    $("#overlayChartWrapper-readlength").height(height).html('<canvas id="overlayChart-readlength" width="480" height="' + height.toFixed() + '"></canvas>');
+    $("#overlayChartWrapper-readquality").height(height).html('<canvas id="overlayChart-readquality" width="480" height="' + height.toFixed() + '"></canvas>');
+    $("#overlayChartWrapper-gccoverage").height(height).html('<canvas id="overlayChart-gccoverage" width="480" height="' + height.toFixed() + '"></canvas>');
+
+    var largeChartOptions = {
+        legend: { display: false },
+        scales: {
+            yAxes: [{
+                ticks: { fontSize: 12 },
+                scaleLabel: { fontSize: 16 }
+            }],
+            xAxes: [{
+                ticks: { fontSize: 12 },
+                scaleLabel: { fontSize: 16 }
+            }]
+        }
+    };
+
+    $.extend(true, largeChartOptions, optionOverrides);
+    if (movies.length > 1) {
+        largeChartOptions.fill = false;
+    }
+
+    // Add a legend
+    $("#overlayChartLegend").empty();
+    var paletteIx = 0;
+    for (var i = 0; i < movies.length; i++) {
+        $("#overlayChartLegend").append('<li class="small list-inline-item" style="color: ' + palette[paletteIx] + ';"><i class="fa fa-lg fa-square"></i> ' +
+            movies[i] + ', ' + movietosample[movies[i]] + '</li>');
+        paletteIx = (paletteIx + 1) % palette.length;
+    }
+
+    histogram(document.getElementById("overlayChart-yield"), $.map(movies, function(movie) { return({ label: movie, points: $.map(dists.yield[movie], function(p) { return ({x: p.bin, y: p.count }); }) }); }), $.extend(true, {}, chartDefaults.yield, largeChartOptions));
+    histogram(document.getElementById("overlayChart-readlength"), $.map(movies, function(movie) { return({ label: movie, points: $.map(dists.readlength[movie], function(p) { return ({x: p.bin, y: p.count }); }) }); }), $.extend(true, {}, chartDefaults.readlength, largeChartOptions));
+    histogram(document.getElementById("overlayChart-readquality"), $.map(movies, function(movie) { return({ label: movie, points: $.map(dists.readquality[movie], function(p) { return ({x: p.bin, y: p.count }); }) }); }), $.extend(true, {}, chartDefaults.readquality, largeChartOptions));
+    gcboxplot(document.getElementById("overlayChart-gccoverage"), $.map(dists.gccoverage[movies[0]], function(p) { return (100*p.bin).toFixed(0); }),
+        $.map(movies, function(movie) {
+            return({
+                label: movie,
+                data: (function() {
+                    var data = [];
+                    for (var j = 0; j < dists.gccoverage[movie].length; j++) {
+                        var s = dists.gccoverage[movie][j];
+                        data.push([s.q1, s.median, s.q3]);
+                    }
+                    return data;
+                })()
+            });
+        }), $.extend(true, {}, chartDefaults.gccoverage, largeChartOptions));
+
+    $("#overlayChartModal").modal("show");
+}
+</script>
+<div class="modal fade" id="chartModal" tabindex="-1" aria-labelledby="chartModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-body">
+        <div class="text-center">
+            <ul id="modalChartLegend" class="list-inline"></ul>
+        </div>
+        <div id="modalChartWrapper" style="width: 100%; height: 0px; background: white;"></div>
+      </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<div class="modal fade" id="overlayChartModal" tabindex="-1" aria-labelledby="overlayChartModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-body">
+        <div class="text-center">
+            <ul id="overlayChartLegend" class="list-inline" style="margin-bottom: 0px !important;"></ul>
+        </div>
+        <div class="row">
+            <div class="col-lg-6">
+                <h5 class="text-center mt-4">Yield</h5>
+                <div id="overlayChartWrapper-yield" style="width: 100%; height: 0px; background: white;"></div>
+            </div>
+            <div class="col-lg-6">
+                <h5 class="text-center mt-4">Read length</h5>
+                <div id="overlayChartWrapper-readlength" style="width: 100%; height: 0px; background: white;"></div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-lg-6">
+                <h5 class="text-center mt-4">Read quality</h5>
+                <div id="overlayChartWrapper-readquality" style="width: 100%; height: 0px; background: white;"></div>
+            </div>
+            <div class="col-lg-6">
+                <h5 class="text-center mt-4">[GC] coverage</h5>
+                <div id="overlayChartWrapper-gccoverage" style="width: 100%; height: 0px; background: white;"></div>
+            </div>
+        </div>
+      </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+    $(function() {
+        // Uncheck selected movies
+        $("#check-all").prop("checked", false);
+        $.map($(".movie-check"), function(e) { $(e).prop("checked", false); } );
+        $("#overlayChartBtn").prop("disabled", true);
+
+        $(".movie-check").on("click", function(event) {
+            //var moviecheckbox = $(this).find(".movie-check");
+            //moviecheckbox.prop("checked", !moviecheckbox.prop("checked"));
+
+            var checkedmovies = 0;
+            $.map($(".movie-check"), function(e) { if($(e).prop("checked")) { checkedmovies++; } });
+            $("#overlayChartBtn").prop("disabled", checkedmovies == 0);
+        });
+
+        // (Un)-check all
+        $("#check-all").on("click", function(event) {
+            var checked = $("#check-all").prop("checked");
+            $.map($(".movie-check"), function(e) { $(e).prop("checked", checked); });
+            $("#overlayChartBtn").prop("disabled", !checked);
+        });
+    });
+</script>
+
+<form style="display:none;" id="smrtcellstats" action="http://100humans/mirror.php" method="POST">
+    <input type="text" name="filename" id="filename" value="smrtcellstats.csv">
+    <input type="text" name="filedata" id="filedata" value="">
+</form>
+<script type="text/javascript">
+    function downloadSmrtcellStats() {
+        var result = [];
+
+        // Header row for CSV
+        var header = ["Movie", "Project", "Sample", "HiFi Yield (Gb)", "Mean HiFi read length (kb)", "Median HiFi read quality (Phred)",
+            "Low/high [GC] coverage (%)", "On-Plate Loading Concentration (pM)", "P1 (%)", "Mean pol read length (kb)", "HiFi/P1 (%)", "Tau 1/2 (kb)", "Tau RC (kb)"];
+        result.push(header.join(","));
+        {% for cohort in cohorts %}
+        {% if cohort.project != "Xcontrol" %}
+        {% for sample in cohort.samples %}
+        {% if sample.smrtcells|length > 0 %}
+        {% for smrtcell in sample.smrtcells %}
+        result.push(["{{smrtcell.moviename}}", "{{smrtcell.project}}", "{{smrtcell.sample}}", "{{(smrtcell.hifiyield/1e9)|round(1) if smrtcell.hifiyield else ""}}",
+            "{{(smrtcell.hifireadlength/1e3)|round(1) if smrtcell.hifireadlength else ""}}",
+            "{{smrtcell.hifireadquality|round|int if smrtcell.hifireadquality else ""}}",
+            "{{(100*smrtcell.gcbalance)|round|int if smrtcell.gccoverage_dist|length > 0 else ""}}",
+            "{{smrtcell.oplc if smrtcell.oplc else ""}}",
+            "{{(100*smrtcell.p1/smrtcell.zmws)|round(0)|int if smrtcell.zmws else ""}}",
+            "{{(smrtcell.totalyield/smrtcell.p1/1e3)|round(0)|int if smrtcell.p1 and smrtcell.totalyield else ""}}",
+            "{{(100*smrtcell.hifireads/smrtcell.p1)|round(0)|int if smrtcell.hifireads and smrtcell.p1 else ""}}",
+            "{{(smrtcell.tau1/1000)|round(0)|int if smrtcell.tau1 > 0 else "" }}",
+            "{{(smrtcell.tauRC/1000)|round(0)|int if smrtcell.tau1 > 0 else "" }}"
+            ].join(","));
+        {% endfor %}
+        {% endif %}
+        {% endfor %}
+        {% endif %}
+        {% endfor %}
+        result = result.join("<EOL>");
+
+        $("#filedata").val(result);
+        $("#smrtcellstats").submit();
+
+        return false;
+    }
+</script>
+{% endblock %}

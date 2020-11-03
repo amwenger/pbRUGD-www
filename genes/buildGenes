@@ -1,0 +1,18 @@
+#!/bin/bash -ef
+# Link Ensembl gene identifiers to other gene sets.
+
+set -beEu -o pipefail
+LOCALTMPDIR=$(mktemp -d)
+
+
+# Download "mart_export.txt" a map from Ensembl gene ID to Entrez gene ID and HGNC symbol from Biomart.
+# Dataset: Human genomes (GRCh38.p13)
+# Filters: none
+# Attributes: Gene stable ID, NCBI gene (formerly Entrezgene) ID, HGNC symbol, Chromosome/scaffold name
+
+# ncbiGene.ensembl.tsv
+awk -F'\t' '(NR>1 && $2 != "") { print $2 "\t" $1; }' ${LOCALTMPDIR}/mart_export.txt | sort -u | sort -k1,1 >| ncbiGene.ensembl.tsv
+# ensembl.hgncSymbol.tsv
+awk -F'\t' '(NR>1) { print $1 "\t" ($3=="" ? $1 : $3); }' ${LOCALTMPDIR}/mart_export.txt | sort -u | sort -k1,1 >| ensembl.hgncSymbol.tsv
+# ensembl.chrom.tsv
+awk -F'\t' '(NR>1) { print $1 "\t" $4; }' ${LOCALTMPDIR}/mart_export.txt | sort -u | sort -k1,1 >| ensembl.chrom.tsv

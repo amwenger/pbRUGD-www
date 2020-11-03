@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<Session genome="hg38" hasGeneTrack="true" hasSequenceTrack="true" locus="chr6:43169270-43183506" version="8">
+    <Resources>
+        {% if cohort.samples|length > 1 %}
+        <Resource path="http://100humansfs/cohorts/{{cohort.cohortid}}/whatshap/{{cohort.cohortid}}.GRCh38.deepvariant.glnexus.phased.vcf.gz"/>
+        <Resource path="http://100humansfs/cohorts/{{cohort.cohortid}}/pbsv/{{cohort.cohortid}}.GRCh38.pbsv.vcf.gz"/>
+        {% else %}
+        <Resource path="http://100humansfs/samples/{{firstsample.sampleid}}/whatshap/{{firstsample.sampleid}}.GRCh38.deepvariant.phased.vcf.gz"/>
+        <Resource path="http://100humansfs/samples/{{firstsample.sampleid}}/pbsv/{{firstsample.sampleid}}.GRCh38.pbsv.vcf.gz"/>
+        {% endif %}
+        <Resource path="http://100humansfs/cohorts/{{cohort.cohortid}}/slivar/{{cohort.cohortid}}.GRCh38.deepvariant.phased.slivar.vcf.gz"/>
+        {% for sample in cohort.samples %}
+        <Resource path="http://100humansfs/samples/{{sample.sampleid}}/whatshap/{{sample.sampleid}}.GRCh38.deepvariant.haplotagged.bam"/>
+        <Resource path="http://100humansfs/samples/{{sample.sampleid}}/hifiasm/{{sample.sampleid}}.asm.GRCh38.bam"/>
+        {% endfor %}
+        <Resource index="http://100humansfs/resources/annotation/GRCh38.segdups.bed.gz.tbi" path="http://100humansfs/resources/annotation/GRCh38.segdups.bed.gz"/>
+        <Resource index="http://100humansfs/resources/annotation/GRCh38.oddRegions.bed.gz.tbi" path="http://100humansfs/resources/annotation/GRCh38.oddRegions.bed.gz"/>
+        <Resource index="http://100humansfs/resources/annotation/GRCh38.repeats.bed.gz.tbi" path="http://100humansfs/resources/annotation/GRCh38.repeats.bed.gz"/>
+    </Resources>
+
+    <Panel height="195" name="DataPanel" width="1237">
+        {% if cohort.samples|length > 1 %}
+        <Track attributeKey="{{cohort.cohortid}}.GRCh38.deepvariant.glnexus.phased.vcf.gz" clazz="org.broad.igv.variant.VariantTrack" color="0,0,178" displayMode="COLLAPSED" featureVisibilityWindow="25000" fontSize="10" id="http://100humansfs/cohorts/{{cohort.cohortid}}/whatshap/{{cohort.cohortid}}.GRCh38.deepvariant.glnexus.phased.vcf.gz" name="{{cohort.cohortid}} DV" siteColorMode="ALLELE_FREQUENCY" squishedHeight="1" visible="true"/>
+        <Track attributeKey="{{cohort.cohortid}}.GRCh38.pbsv.vcf.gz" clazz="org.broad.igv.variant.VariantTrack" color="0,0,178" displayMode="EXPANDED" featureVisibilityWindow="250000" fontSize="10" id="http://100humansfs/cohorts/{{cohort.cohortid}}/pbsv/{{cohort.cohortid}}.GRCh38.pbsv.vcf.gz" name="{{cohort.cohortid}} pbsv" siteColorMode="ALLELE_FREQUENCY" squishedHeight="1" visible="true"/>
+        {% else %}
+        <Track attributeKey="{{firstsample.sampleid}}.GRCh38.deepvariant.phased.vcf.gz" clazz="org.broad.igv.variant.VariantTrack" color="0,0,178" displayMode="COLLAPSED" featureVisibilityWindow="25000" fontSize="10" id="http://100humansfs/samples/{{firstsample.sampleid}}/whatshap/{{firstsample.sampleid}}.GRCh38.deepvariant.phased.vcf.gz" name="{{cohort.cohortid}} DV" siteColorMode="ALLELE_FREQUENCY" squishedHeight="1" visible="true"/>
+        <Track attributeKey="{{firstsample.sampleid}}.GRCh38.pbsv.vcf.gz" clazz="org.broad.igv.variant.VariantTrack" color="0,0,178" displayMode="EXPANDED" featureVisibilityWindow="250000" fontSize="10" id="http://100humansfs/samples/{{firstsample.sampleid}}/pbsv/{{firstsample.sampleid}}.GRCh38.pbsv.vcf.gz" name="{{cohort.cohortid}} pbsv" siteColorMode="ALLELE_FREQUENCY" squishedHeight="1" visible="true"/>
+        {% endif %}
+        <Track attributeKey="{{cohort.cohortid}}.GRCh38.deepvariant.phased.slivar.vcf.gz" clazz="org.broad.igv.variant.VariantTrack" color="0,0,178" displayMode="EXPANDED" featureVisibilityWindow="1000000" fontSize="10" id="http://100humansfs/cohorts/{{cohort.cohortid}}/slivar/{{cohort.cohortid}}.GRCh38.deepvariant.phased.slivar.vcf.gz" name="{{cohort.cohortid}} DV, rare" siteColorMode="ALLELE_FREQUENCY" squishedHeight="1" visible="true"/>
+    </Panel>
+
+    <Panel height="230" name="Panel_read_coverage" width="1237">
+        {% for sample in cohort.samples %}
+        <Track attributeKey="{{sample.sampleid}}.GRCh38.deepvariant.haplotagged.bam Coverage" autoScale="true" clazz="org.broad.igv.sam.CoverageTrack" color="175,175,175" colorScale="ContinuousColorScale;0.0;34.0;255,255,255;175,175,175" fontSize="10" id="http://100humansfs/samples/{{sample.sampleid}}/whatshap/{{sample.sampleid}}.GRCh38.deepvariant.haplotagged.bam_coverage" name="{{'* ' if sample.diseasestatus == 'affected' else ''}}{{sample.sampleid}}" snpThreshold="0.2" visible="true" height="20">
+            <DataRange baseline="0.0" drawBaseline="true" flipAxis="false" maximum="16.0" minimum="0.0" type="LINEAR"/>
+        </Track>
+        {% endfor %}
+    </Panel>
+
+    {% for sample in cohort.samples %}
+    <Panel height="230" name="Panel_reads_{{sample.sampleid}}" width="1237">
+        <Track attributeKey="{{sample.sampleid}}.GRCh38.deepvariant.haplotagged.bam" clazz="org.broad.igv.sam.AlignmentTrack" experimentType="THIRD_GEN" fontSize="10" id="http://100humansfs/samples/{{sample.sampleid}}/whatshap/{{sample.sampleid}}.GRCh38.deepvariant.haplotagged.bam" name="{{'* ' if sample.diseasestatus == 'affected' else ''}}{{sample.sampleid}}" visible="true" displayMode="COLLAPSED">
+            <RenderOptions colorByTag="HP" colorOption="NONE" groupByOption="TAG" groupByTag="HP"/>
+        </Track>
+    </Panel>
+    {% endfor %}
+
+    <Panel height="230" name="Panel_asm" width="1237">
+        {% for sample in cohort.samples %}
+        <Track attributeKey="{{sample.sampleid}}.asm.GRCh38.bam" clazz="org.broad.igv.sam.AlignmentTrack" experimentType="THIRD_GEN" fontSize="10" id="http://100humansfs/samples/{{sample.sampleid}}/hifiasm/{{sample.sampleid}}.asm.GRCh38.bam" name="{{'* ' if sample.diseasestatus == 'affected' else ''}}{{sample.sampleid}} asm" visible="true" displayMode="COLLAPSED" height="40">
+            <RenderOptions colorByTag="TG" colorOption="NONE" groupByOption="NONE" groupByTag="TG"/>
+        </Track>
+        {% endfor %}
+    </Panel>
+
+    <Panel height="174" name="FeaturePanel" width="1237">
+        <Track altColor="0,0,178" attributeKey="Reference sequence" clazz="org.broad.igv.track.SequenceTrack" color="0,0,178" fontSize="10" id="Reference sequence" name="Reference sequence" visible="true"/>
+        <Track altColor="0,0,178" attributeKey="Gene" clazz="org.broad.igv.track.FeatureTrack" color="0,0,178" colorScale="ContinuousColorScale;0.0;402.0;255,255,255;0,0,178" fontSize="10" height="35" id="hg38_genes" name="Gene" visible="true"/>
+        <Track altColor="0,0,178" attributeKey="Segdups" clazz="org.broad.igv.track.FeatureTrack" color="255,153,0" featureVisibilityWindow="0" fontSize="10" id="http://100humansfs/resources/annotation/GRCh38.segdups.bed.gz" name="Segdups" visible="true"/>
+        <Track altColor="0,0,178" attributeKey="Repeats" clazz="org.broad.igv.track.FeatureTrack" color="0,0,0" displayMode="SQUISHED" featureVisibilityWindow="2500000" fontSize="10" id="http://100humansfs/resources/annotation/GRCh38.repeats.bed.gz" name="Repeats" visible="true"/>
+        <Track altColor="0,0,178" attributeKey="Odd Regions" clazz="org.broad.igv.track.FeatureTrack" color="255,0,0" displayMode="SQUISHED" featureVisibilityWindow="0" fontSize="10" id="http://100humansfs/resources/annotation/GRCh38.oddRegions.bed.gz" name="Odd Regions" visible="true"/>
+    </Panel>
+    <HiddenAttributes>
+        <Attribute name="DATA FILE"/>
+        <Attribute name="DATA TYPE"/>
+        <Attribute name="NAME"/>
+    </HiddenAttributes>
+</Session>

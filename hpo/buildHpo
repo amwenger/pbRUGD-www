@@ -1,0 +1,35 @@
+#!/bin/bash -ef
+
+set -beEu -o pipefail
+LOCALTMPDIR=$(mktemp -d)
+
+# Download the ontology
+curl -s "https://raw.githubusercontent.com/obophenotype/human-phenotype-ontology/master/hp.obo" > ${LOCALTMPDIR}/hp.obo
+# extract HPO terms
+cat ${LOCALTMPDIR}/hp.obo |
+    awk 'BEGIN {pid="";} ($1=="[Term]" && pid!="") { print pid "\t" pname "\t" pdef; pid=""; pname=""; pdef=""; }  ($1=="id:") { pid=$2; } ($1=="name:") { pname=$0; } ($1=="def:") { pdef=$0; } END { print pid "\t" pname "\t" pdef; }' |
+    sed -e 's/name: //g' -e 's/def: //' | grep -v obsolete |
+    sed -e 's/" \[.*//' |
+    awk -F'\t' '{ if(substr($3,1,1)=="\"") { $3=substr($3,2); } if(substr($3,length($3),1)=="\"") { $3=substr($3,1,length($3)-1); } OFS="\t"; print; }' |
+    sed -e 's/\\"/"/g' | sed -e 's/\\ncomment.*//'| sed -e 's/\\n/ /g' | sort -k1,1 > hpoTerms.txt
+# extract the ontology
+cat ${LOCALTMPDIR}/hp.obo| awk '($1=="id:") { id=$2; } ($1=="is_a:") { print id "\t" $2; }' | sort -u -k1,1 -k2,2 > hpoDag.txt
+
+# Download the newest "monthly" build of the HPO annotations, which includes OMIM gene<->disease<->inheritance links.
+mkdir -p "${LOCALTMPDIR}/hpo"
+curl -s "http://compbio.charite.de/jenkins/job/hpo.annotations/lastSuccessfulBuild/artifact/util/annotation/genes_to_phenotype.txt" >| ${LOCALTMPDIR}/genes_to_phenotype.txt
+
+# -- Gene<->phenotype
+sort -k1,1 ${LOCALTMPDIR}/genes_to_phenotype.txt | join -t$'\t' - ../genes/ncbiGene.ensembl.tsv | awk -F'\t' '{ print $NF "\t" $3 "\t"; }' | sort -u > ensembl.hpoPhenotype.tsv
+
+# -- Extract gene<->inheritance, removing impossible inheritance links.  Disease entities are linked to genes
+#    and separately to phenotypes.  The gene<->phenotype links are the Cartesian products of these annotations;
+#    so, if a disease is linked to multiple genes with different inheritance models, the annotations link one
+#    of the genes to the observed inheritance models for any gene.
+grep -E 'HP:0000006|HP:0000007|HP:0001419|HP:0001423|HP:0001427' ensembl.hpoPhenotype.tsv |
+    sed -e 's/HP:0000006/AD/' -e 's/HP:0000007/AR/' -e 's/HP:0001419/XLR/' -e 's/HP:0001423/XLD/' -e 's/HP:0001427/MI/' |
+    join -t$'\t' - ../genes/ensembl.chrom.tsv |
+    awk 'BEGIN{OFS="\t";} ($2 ~ /^A/ && ($3 == "X" || $3 == "Y" || $3 == "M")) { $2="."; } ($2 ~ /^X/ && $3 != "X") { $2="."; } ($2 ~ /^M/ && $3 != "MT") { $2="."; } { if($2!=".") { print $1,$2; } }' |
+    sort -u | sort -k1,1 -k2,2 > ensembl.inheritance.tsv
+
+rm -rf ${LOCALTMPDIR}

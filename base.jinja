@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css" integrity="sha384-9aIt2nRpC12Uk9gS9baDl411NQApFmC26EwAOH8WgZl5MYYxFfc+NcPb1dKGj7Sk" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css" integrity="sha384-wvfXpqpZZVQGK6TAh5PVlGOfQNHSoD2xbE+QkPxCAFlNEevoEH3Sl0sibVcOQVnN" crossorigin="anonymous">
+
+    <!-- JavaScript -->
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js" integrity="sha384-DfXdz2htPH0lsSSs5nCTpuj/zy4C+OGpamoFVy38MVBnE+IbbVYUew+OrCXaRkfj" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.3/dist/Chart.min.js" integrity="sha256-R4pqcOYV8lt7snxMQO/HSbVCFRPMdrhAFMH+vr9giYI=" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-box-and-violin-plot@2.3.0/build/Chart.BoxPlot.min.js" integrity="sha256-oSXONx2j6gJwbBUHsm3koNHRCZPaes4A1L3DYKPWahw=" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.0/dist/umd/popper.min.js" integrity="sha384-Q6E9RHvbIyZFJoft+2mJbHaEWldlvI9IOYy5n3zV9zzTtmI3UksdQRVvoxMfooAo" crossorigin="anonymous"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/js/bootstrap.min.js" integrity="sha384-OgVRvuATP1z7JjHLkuOU7Xw704+h835Lr+6QL9UvYjZE3Ipu6Tp75j7Bh/kR0JKI" crossorigin="anonymous"></script>
+
+
+    <!-- Cookie methods -->
+    <script type="text/javascript">
+      function setCookie(cname, cvalue, exdays) {
+        var d = new Date();
+        d.setTime(d.getTime() + (exdays*24*60*60*1000));
+        var expires = "expires="+ d.toUTCString();
+        document.cookie = cname + "=" + cvalue + ";" + expires + ";path=/;SameSite=Lax";
+      }
+      function getCookie(cname) {
+        var name = cname + "=";
+        var decodedCookie = decodeURIComponent(document.cookie);
+        var ca = decodedCookie.split(';');
+        for(var i = 0; i <ca.length; i++) {
+          var c = ca[i];
+          while (c.charAt(0) == ' ') {
+            c = c.substring(1);
+          }
+          if (c.indexOf(name) == 0) {
+            return c.substring(name.length, c.length);
+          }
+        }
+        return undefined;
+      }
+    </script>
+
+    <title>100 Humans Project</title>
+  </head>
+  <body>
+    <nav class="navbar fixed-top navbar-expand-sm navbar-dark bg-dark">
+      <a class="btn btn-sm btn-outline-warning mr-4" href="http://100humans">100H</a>
+      {% block navbarbegin %}{% endblock %}
+      <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+
+      <div class="collapse navbar-collapse" id="navbarSupportedContent">
+        <ul class="navbar-nav flex-row ml-sm-auto d-sm-flex">
+          <li class="nav-item">
+            <a class="nav-link" href="https://pacbioca-my.sharepoint.com/:f:/g/personal/awenger_pacificbiosciences_com/ElkzvDzxgldAouvixO9TQRoBFTtDpIqfQixuGxQf9IX4-w?e=1JTWUV">Meetings</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="//100humansfs/slurm_queue.txt">Slurm</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="https://smrtlink-100humans:8243/sl/home">SMRT Link</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="//100humans/">Samples</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="//100humans/smrtcells">SMRT Cells</a>
+          </li>
+          <!--<li class="nav-item dropdown">
+            <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+              Links
+            </a>
+            <div class="dropdown-menu dropdown-menu-right" aria-labelledby="navbarDropdown">
+              <a class="dropdown-item text-right" href="https://pacbioca-my.sharepoint.com/:w:/g/personal/awenger_pacificbiosciences_com/EUieE9ShY3BNhdGTjQEEr-UB4ghYw7vOi5uWzgU_36WjiQ?e=Ky0E39" target="_blank">Project Plan</a>
+              <a class="dropdown-item text-right" href="https://www.omim.org/" target="_blank">OMIM</a>
+              <a class="dropdown-item text-right" href="https://hpo.jax.org/app/" target="_blank">HPO</a>
+            </div>
+          </li>-->
+        </ul>
+        {% block navbarend %}
+        {% endblock %}
+      </div>
+    </nav>
+
+    <div class="container pb-3" style="padding-top: 70px;">
+    {% block body %}
+    {% endblock %}
+    </div>
+
+    <!-- initialize tooltips and dropdowns -->
+    <script>
+      $(function() { $('[data-toggle="tooltip"]').tooltip(); });
+      $(function() { $('[data-toggle="dropdown"]').dropdown(); });
+      $(function() { $('[data-toggle="modal"]').modal(); });
+    </script>
+  </body>
+</html>

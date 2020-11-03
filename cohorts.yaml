@@ -1,0 +1,21 @@
+# pbRUGD cohort definitions
+
+- id: cohort_name
+  title: Cohort description
+  notes:
+    - First note about cohort
+    - Second note about cohort
+  phenotypes:
+    - "HP:0000750" # delayed speech and language development
+    - "HP:0001270" # motor delay
+  affecteds:
+    - id: affected1
+      sex: FEMALE
+      parents: [a1_mother, a1_father] # list mother, father
+    - id: affected2
+      sex: MALE
+  unaffecteds:
+    - id: a1_mother
+      sex: FEMALE
+    - id: a1_father
+      sex: MALE

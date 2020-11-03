@@ -1,0 +1,418 @@
+{% extends "./base.jinja" %}
+
+{% block navbarbegin %}
+<span class="navbar-brand mb-0 h1">{{cohort.cohortid}}
+  {% if cohort.title %}<span class="d-none d-md-inline small">&mdash; {{cohort.title}}</span>{% endif %}
+</span>
+{% endblock %}
+
+{% block body %}
+<script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.8.0/angular.min.js"></script>
+<script src="https://d3js.org/d3.v5.min.js"></script>
+
+<script>
+  angular.module("cohortApp", []).filter('escape', function() {
+      return function(input) {
+        if(input) {
+            return window.encodeURIComponent(input);
+        }
+        return "";
+      }
+    }).controller("CohortController", ['$scope', function($scope) {
+      $scope.variantsets = [];
+
+      Promise.allSettled([
+        d3.tsv("http://100humans/cohorts/analysis/{{cohort.cohortid}}/slivar/{{cohort.cohortid}}.GRCh38.deepvariant.phased.slivar.tsv"),
+        d3.tsv("http://100humans/cohorts/analysis/{{cohort.cohortid}}/slivar/{{cohort.cohortid}}.GRCh38.deepvariant.phased.slivar.compound-hets.tsv")
+      ]).then(function(tsvs) {
+        var singlevariants = [];
+        var compoundhets = [];
+        if (tsvs[0].status == "fulfilled") {
+            singlevariants = singlevariants.concat(tsvs[0].value);
+        }
+        if (tsvs[1].status == "fulfilled") {
+            compoundhets = compoundhets.concat(tsvs[1].value);
+        }
+
+        // Clean up the variant objects
+        singlevariants.concat(compoundhets).forEach(variant => {
+            // Parse the variant allele
+            variant.chrom = variant["chr:pos:ref:alt"].split(":")[0];
+            variant.pos = parseInt(variant["chr:pos:ref:alt"].split(":")[1], 10);
+            variant.ref = variant["chr:pos:ref:alt"].split(":")[2];
+            variant.alt = variant["chr:pos:ref:alt"].split(":")[3];
+            if (variant.ref.length == variant.alt.length) {
+                variant.allele = variant.ref + ">" + variant.alt;
+            }
+            else if (variant.ref.length > variant.alt.length) {
+                variant.allele = "-" + (variant.ref.length - variant.alt.length).toFixed(0) + " del" + variant.ref.substr(1);
+            }
+            else {
+                variant.allele = "+" + (variant.alt.length - variant.ref.length).toFixed(0) + " ins" + variant.alt.substr(1);
+            }
+
+            if (variant.allele.length > 12) {
+                variant.shortallele = variant.allele.substr(0,12) + "...";
+            }
+            else {
+                variant.shortallele = variant.allele;
+            }
+
+            variant.mode = variant["#mode"]
+            variant.highest_impact_rank = (variant.highest_impact == "" ? 999 : parseInt(variant.highest_impact));
+            variant.impact = variant.highest_impact.substr(3).replace("_", " ");
+            if (variant.gene_description_1.search("oe_lof") != -1) {
+                variant.oe_lof = parseFloat(variant.gene_description_1.split(";")[1].split("=")[1]);
+             }
+            else {
+                variant.oe_lof = -1;
+            }
+            variant.phrank = variant.gene_description_3 || -1;
+
+            variant.gnomad_nhomalt = Math.max(variant.gnomad_nhomalt, 0);
+            variant.hprc_nhomalt = Math.max(variant.hprc_nhomalt, 0);
+            variant.gnomad_ac = Math.max(variant.gnomad_ac, 0);
+            variant.hprc_ac = Math.max(variant.hprc_ac, 0);
+
+            variant.max_nhomalt = Math.max(variant.gnomad_nhomalt, variant.hprc_nhomalt);
+            variant.max_ac = Math.max(variant.gnomad_ac, variant.hprc_ac);
+
+            var genotypes = variant["genotype(sample,dad,mom)"].split(",").map(function(s) { return (s=="." ? 0 : parseInt(s, 10)); }).map(function(x) { return (x < 0 ? 0 : x); });
+            var depths = variant["depths(sample,dad,mom)"].split(",").map(function(s) { return (s=="." ? 0 : parseInt(s, 10)); });
+            var allele_balances = variant["allele_balance(sample,dad,mom)"].split(",").map(function(s) { return (s=="." ? 0 : parseFloat(s, 10)); });
+            variant.genotypes = [];
+            variant.depths = [];
+            variant.allele_balances = [];
+            variant.allele_depths = [];
+            for (var i = 0; i < {{ cohort.samples|length }} && i < 3; i++) {
+                variant.genotypes.push(genotypes[i]);
+                variant.depths.push(depths[i]);
+                variant.allele_balances.push(allele_balances[i]);
+                variant.allele_depths.push(Math.round(variant.allele_balances[i]*variant.depths[i]));
+            }
+            variant.highest_impact_rank = (variant.highest_impact == "" ? 999 : parseInt(variant.highest_impact, 10));
+            variant.lof = variant.highest_impact_rank <= 7;
+        });
+
+        // Create "variant sets", a combination of variants that satisfy an inheritance models.
+        // For dominant and homozygous recessive, a variants set is a single variants.
+        // For compound het, a variant set is a pair of variants.
+        var variantsets = [];
+        singlevariants.forEach((variant) => {
+            variantsets.push({ mode: variant["#mode"], gene: variant.gene, oe_lof: variant.oe_lof, phrank: variant.phrank, variants: [variant] });
+        });
+        // Slivar assigns the same "mode" to variants that make a compound het pair.
+        var compoundhetpairs = {};
+        compoundhets.forEach((variant) => {
+            var m = variant["#mode"];
+            if (variant.slivar_comphet) {
+                var cols = variant.slivar_comphet.split("/");
+                variant.orientation = cols[cols.length-1];
+            }
+            compoundhetpairs[m] = compoundhetpairs[m] || [];
+            compoundhetpairs[m].push(variant);
+        });
+        Object.values(compoundhetpairs).forEach((variants) => {
+            variantsets.push({ mode: "compoundhet", orientation: variants[0].orientation, gene: variants[0].gene, oe_lof: variants[0].oe_lof, phrank: variants[0].phrank, variants: variants });
+        });
+
+        // Tag variant sets that include a loss-of-function variant.
+        variantsets.forEach((variantset) => {
+            variantset.lof = false;
+            for (var i = 0; i < variantset.variants.length; i++) {
+                if (variantset.variants[i].lof) {
+                    variantset.lof = true;
+                    break;
+                }
+            }
+        });
+
+        // Tag "interesting" variant sets
+        variantsets.forEach((variantset) => {
+            variantset.interesting = [];
+
+            // LOF with ALCT=0 in a LOF-intolerant gene
+            if (variantset.lof && variantset.oe_lof >= 0 && variantset.oe_lof < 0.35) {
+                for (var i = 0; i < variantset.variants.length; i++) {
+                    if (variantset.variants[i].lof && variantset.variants[i].max_ac == 0) {
+                        variantset.interesting.push("LOF in LOF-intolerant gene");
+                        break;
+                    }
+                }
+            }
+
+            // Compound het where both variant have HMCT==0
+            if (variantset.mode == "compoundhet" && variantset.orientation != "cis" && variantset.variants[0].max_nhomalt == 0 && variantset.variants[1].max_nhomalt == 0) {
+                variantset.interesting.push("Compound het where both variants have HMCT=0");
+            }
+
+            // Homozygous where variant has HMCT==0
+            if ((variantset.mode == "recessive" || variantset.mode == "x_recessive") && (variantset.variants[0].max_nhomalt == 0)) {
+                variantset.interesting.push("Homozygous variant with HMCT=0");
+            }
+        });
+
+        $scope.variantsets = variantsets;
+        updateCandidateGenes();
+        $scope.$apply();
+    });
+
+    $scope.filter = {
+      gene: "",
+      hmct: 1,
+      alct_dominant: 1
+    };
+
+    $scope.$watch(function(scope) { return scope.filter; }, function() {
+        updateCandidateGenes();
+    }, true);
+
+
+    // Variant-level filter
+    function variantFilter(variant, mode) {
+        var filter = $scope.filter;
+
+        if (variant.highest_impact_rank > 20) {
+            return false;
+        }
+
+        if (mode == "dominant" || mode == "x_dominant") {
+            if (variant.max_ac > filter.alct_dominant) {
+                return false;
+            }
+        }
+        if (mode == "recessive" || mode == "x_recessive" || mode == "compoundhet") {
+            if (variant.max_nhomalt > filter.hmct) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Retain a variant set if it meets the variant set filter criteria and all of its variants meet the variant filters.
+    var geneBlacklist = { "MUC4": true, "MUC6": true, "MUC3A": true, "MUC12": true, "CT47A3": true, "CT47A4": true, "CT47A7": true, "EPPK1": true, "NPIPB3": true, "NPIPB5": true, "NBPF14": true, "NBPF20": true };
+    $scope.variantSetFilter = function(item) {
+        // Filter cis compound hets
+        if (item.mode == "compoundhet" && item.orientation == "cis") {
+            return false;
+        }
+
+        var filter = $scope.filter;
+        gene = item.gene.toUpperCase();
+        if (filter.gene != "" && gene.search(filter.gene.toUpperCase()) == -1) {
+            return false;
+        }
+        if (gene.startsWith("HLA") || gene.startsWith("TRBV") || geneBlacklist[gene]) {
+            return false;
+        }
+        for (var i = 0; i < item.variants.length; i++) {
+            if (!variantFilter(item.variants[i], item.mode)) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    $scope.variantSetOrderBy = function(item) {
+        var variantsetimpact = 999;
+
+        for (var i = 0; i < item.variants.length; i++) {
+            if (item.variants[i].highest_impact_rank < variantsetimpact) {
+                variantsetimpact = item.variants[i].highest_impact_rank;
+            }
+        }
+        return variantsetimpact;
+    };
+
+    $scope.geneOrderBy = function(item) {
+        var impact = 999;
+        for (var i = 0; i < item.variants.length; i++) {
+            if (item.variants[i].highest_impact_rank < impact) {
+                impact = item.variants[i].highest_impact_rank;
+            }
+        }
+        return impact;
+    };
+
+    $scope.candidateGenes = [];
+    function updateCandidateGenes() {
+        var genes = {};
+        // Filter variant sets then group them by gene.
+        $scope.variantsets.filter(variantset => $scope.variantSetFilter(variantset)).forEach((vs) => {
+            genes[vs.gene] = genes[vs.gene] || { gene: vs.gene, oe_lof: vs.oe_lof, phrank: vs.phrank, transcomphet: false,  variantsets: [] };
+            if (vs.mode == "compoundhet" && vs.orientation == "trans") {
+                genes[vs.gene].transcomphet = true;
+            }
+            genes[vs.gene].variantsets.push(vs);
+        });
+
+        // Uniquify the variants for a given gene.
+        // Mark the gene as having LOF if at least one variant is LOF.
+        Object.values(genes).forEach(gene => {
+            var interesting = {};
+
+            var variants = {};
+            gene.variantsets.forEach(vs => {
+                vs.interesting.forEach(reason => {
+                    interesting[reason] = true;
+                });
+                vs.variants.forEach(v => {
+                    var vkey = v.chrom + "$" + v.pos.toFixed(0) + "$" + v.ref + "$" + v.alt;
+                    variants[vkey] = v;
+                });
+            });
+
+            gene.interesting = Object.values(interesting);
+            gene.variants = Object.values(variants);
+            gene.lof = false;
+            gene.variants.forEach(v => {
+                if(v.lof) {
+                    gene.lof = true;
+                }
+            });
+        });
+
+        $scope.candidateGenes = Object.values(genes);
+    };
+  }]);
+</script>
+<div ng-app="cohortApp">
+  <div ng-controller="CohortController as cohort">
+    {% if cohort.notes or cohort.solved or cohort.igv %}
+    <h5>Notes</h5>
+    <ul class="small pl-4">
+      {% for note in cohort.notes %}
+      <li>{{ note }}</li>
+      {% endfor %}
+      {% if cohort.solved %}
+      <li><b class="text-success">Solved</b> {{cohort.solved}}</li>
+      {% endif %}
+      {% if cohort.igv %}
+      <li><span class="font-weight-bold">IGV</span> <a href="http://100humansfs/cohorts/{{cohort.cohortid}}/{{cohort.cohortid}}_igv.xml">http://100humansfs/cohorts/{{cohort.cohortid}}/{{cohort.cohortid}}_igv.xml</a></li>
+      {% endif %}
+    </ul>
+    {% endif %}
+    <h5>Phenotype</h5>
+    <table class="table table-sm table-borderless">
+      <tbody class="small">
+        {% for bodysystem,phenotypes in cohort.bodysystems.items() %}
+        <tr>
+          <td class="text-nowrap font-weight-bold">{{bodysystem}}</td>
+          <td>
+            <ul class="list-inline mb-0">
+            {% for phenotype in phenotypes %}
+              <li class="list-inline-item" {% if phenotype.definition != "" %} data-toggle="tooltip" title="{{phenotype.definition|e}} [{{"{:,.0f}".format(phenotype.genect)}} genes]" {% endif %}>
+                <a href="https://hpo.jax.org/app/browse/term/{{phenotype.hpoid}}" target="_blank">{{phenotype.name}}</a>
+              </li>
+            {% endfor %}
+            </ul>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="card mb-3">
+        <div class="card-body">
+          <form>
+            <div class="form-group row mb-1">
+              <label for="term" class="col-sm-3 col-form-label col-form-label-sm">Search term</label>
+              <div class="col-sm-4">
+                <input class="form-control form-control-sm" type="text" id="gene" ng-model="searchTerm">
+              </div>
+            </div>
+            <div class="form-group row mb-1">
+              <label for="gene" class="col-sm-3 col-form-label col-form-label-sm">Gene</label>
+              <div class="col-sm-2">
+                <input class="form-control form-control-sm" type="text" id="gene" ng-model="filter.gene">
+              </div>
+            </div>
+            <div class="form-group row mb-1">
+              <label for="alct_dominant" class="col-sm-3 col-form-label col-form-label-sm">Dominant ALCT &le;</label>
+              <div class="col-sm-2">
+                <input class="form-control form-control-sm" type="number" id="alct_dominant" min=0 max=4 step=1 ng-model="filter.alct_dominant">
+              </div>
+            </div>
+            <div class="form-group row mb-0">
+              <label for="alct_dominant" class="col-sm-3 col-form-label col-form-label-sm">Recessive HMCT &le;</label>
+              <div class="col-sm-2">
+                <input class="form-control form-control-sm" type="number" id="hmct" min=0 max=4 step=1 ng-model="filter.hmct">
+              </div>
+            </div>
+          </form>
+        </div>
+    </div>
+
+    <table class="table table-sm small">
+      <thead>
+        <tr>
+          <th></th>
+          <th>Gene</th>
+          <th title="Phrank gene-phenotype similarity score">Phrank</th>
+          <th>O/E LOF</th>
+          <th>GRCh38</th>
+          <th>Variant</th>
+          <th>Impact</th>
+          <th>gnomAD</th>
+          <th>HPRC</th>
+          {% for sample in cohort.samples %}
+          <th class="text-center {{ 'text-primary' if sample.diseasestatus == "affected" }}">{{sample.sampleid}} <i class="fa fa-{{ 'male' if sample.sex=='MALE' else 'female' if sample.sex=='FEMALE' else 'question' }}"></i></th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody ng-repeat="gene in candidateGenes|orderBy:geneOrderBy">
+        <tr ng-repeat="variant in gene.variants">
+          <td>
+            <span ng-show="$first">
+                <i ng-show="gene.transcomphet" class="fa fa-exchange" title="trans compound het"></i>
+            </span>
+          </td>
+          <td>
+            <span ng-show="$first">
+                <a href="https://www.google.com/search?q={{ '{{gene.gene}}' }}+{{ '{{searchTerm | escape}}' }}" target="_blank">{{ '{{gene.gene}}' }}</a>
+            </span>
+          </td>
+          <td>
+            <span ng-show="$first && gene.phrank >= 0">
+              <span ng-class="{ 'text-success': gene.phrank && gene.phrank >= 10 }">{{ '{{gene.phrank|number:2}}' }}</span>
+            </span>
+          </td>
+          <td>
+            <span ng-show="$first && gene.oe_lof >= 0">
+              <span ng-class="{ 'text-success': gene.lof && gene.oe_lof <= 0.35, 'text-danger': gene.lof && gene.oe_lof >= 0.9  }">{{ '{{gene.oe_lof|number:2}}' }}</span>
+                </span>
+            </span>
+          </td>
+          <td>
+            {{ '{{variant.chrom}}' }}:{{ '{{variant.pos|number}}' }}
+          </td>
+          <td>
+            <span title="{{ '{{variant.allele}}' }}">{{ '{{variant.shortallele}}' }}</span>
+          </td>
+          <td>
+            {{ '{{variant.impact}}' }}
+          </td>
+          <td>
+            <span ng-show="variant.gnomad_ac <= 0">-</span>
+            <span ng-class="{ 'text-danger': variant['mode']=='dominant' }" ng-show="variant.gnomad_ac > 0">ALCT {{ '{{variant.gnomad_ac|number:0 }}' }}</span>
+            <span class="text-danger" ng-show="variant.gnomad_nhomalt > 0">HMCT {{ '{{variant.gnomad_nhomalt|number:0 }}' }}
+          </td>
+          <td>
+            <span ng-show="variant.hprc_ac <= 0">-</span>
+            <span ng-class="{ 'text-info': variant['mode']!='dominant', 'text-danger': variant['mode']=='dominant' }" ng-show="variant.hprc_ac > 0">ALCT {{ '{{variant.hprc_ac|number:0 }}' }}</span>
+            <span "text-danger" ng-show="variant.hprc_nhomalt > 0">HMCT {{ '{{variant.hprc_nhomalt|number:0 }}' }}
+          </td>
+          <td ng-repeat="genotype in variant.genotypes track by $index" class="text-center">
+            <span ng-class="{ 'text-black-50': genotype > 0 && variant.allele_balances[$index]<0.33 }" data-toggle="tooltip" title="AD/DP {{ "{{ variant.allele_depths[$index] }}" }}/{{ "{{ variant.depths[$index] }}" }}">
+              <i class="fa fa-circle" ng-show="genotype==2"></i>
+              <i class="fa fa-adjust" ng-show="genotype==1"></i>
+              <i class="fa fa-circle-o" ng-show="genotype==0"></i>
+            </span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

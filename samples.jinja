@@ -1,0 +1,365 @@
+{% extends "./base.jinja" %}
+
+{% block initialnavitems %}
+{% endblock %}
+
+{% block body %}
+
+{% if importerrors %}
+<div class="alert alert-danger" role="alert">
+  <h4 class="alert-heading">SMRT Cell import error{% if importerrors|length > 1 %}s <span class="badge badge-danger">{{importerrors|length}}</span>{% endif %}</h4>
+  <ol>
+    {% for importerror in importerrors %}
+    <li>{{ importerror.error}}
+      <ul class="list-unstyled">
+        {% for file in importerror.files %}
+        <li><span class="text-monospace" style="font-size: 8pt;">{{ file }}</span></li>
+        {% endfor %}
+      </ul>
+    {% endfor %}
+  </ol>
+</div>
+{% endif %}
+<table class="table table-sm table-hover">
+  <thead>
+    <tr>
+      <th colspan="3"></th>
+      <th>Sample</th>
+      <th><span data-toggle="tooltip" data-html="true" title="<div>Total Yield (determines SMRT Cell color)</div><div class='small text-success'>&gt; 25 Gb</div><div class='small text-warning'>22.5 - 25 Gb</div><div class='small text-danger'>&lt; 22.5 Gb</div><div>Average read length</div><div class='small text-success'>&gt; 15 kb</div><div class='small text-warning'>12 - 15 kb</div><div class='small text-danger'>&lt; 12 kb</div><div>Median read quality</div><div class='small text-success'>&ge; Q30</div><div class='small text-warning'>Q28-29</div><div class='small text-danger'>&lt; Q28</div>">SMRT Cells</span></th>
+      <th>Coverage</th>
+      <th><span data-toggle="tooltip" data-html="true" title="<div>Lowest:highest median coverage across [GC] bins</div><div class='small text-success'>&gt; 70%</div><div class='small text-warning'>50-70%</div><div class='small text-danger'>&lt; 50%</div>">[GC] coverage</span></th>
+      <th>Identity</th>
+      <th></th>
+      <th></th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for cohort in cohorts %}
+    {% if cohort.project != "Xcontrol" %}
+    {% if cohort.samples|length and loop.changed(cohort.project + "/" + cohort.group) %}
+    <tr class="{{ 'table-warning' if cohort.project == 'unassigned' else 'table-success' if cohort.group != "singletons" and cohort.solved else 'table-active' }}">
+      <td class="pt-0 pb-0">
+        {% if cohort.group != "singletons" and cohort.solved %}
+        <i class="fa fa-star text-success" data-toggle="tooltip" data-html="true" title="<p class='text-success font-weight-bold'>Solved</p><p>{{cohort.solved|e}}</p>"></i>
+        {% endif %}
+      </td>
+      <td colspan="8" class="text-center pt-0 pb-0">
+      <small>
+      {% if cohort.group == "singletons" %}
+      <strong>{{cohort.project }} / {{ cohort.group }}</strong>
+      {% else %}
+      <strong>{{cohort.project }} / <a href="./cohorts/{{ cohort.cohortid }}">{{ cohort.group }}</a> {% if cohort.title %}&mdash; {{cohort.title}}{% endif %}</strong>
+      <span class="text-nowrap">{% if cohort.affecteds|length %}{{ cohort.affecteds|length }} affected{% endif %}
+      {% if cohort.affecteds|length and cohort.unaffecteds|length %}+{% endif %}
+      {% if cohort.unaffecteds|length %}{{ cohort.unaffecteds|length }}{% endif %} unaffected
+      </span>
+      {% endif %}
+      </small>
+      </td>
+      <td class="pt-0 pb-0">
+        {% if cohort.group != "singletons" and cohort.igv %}
+        <a class="small" href="http://100humansfs/cohorts/{{cohort.cohortid}}/{{cohort.cohortid}}_igv.xml">IGV</a>
+        {% endif %}
+      </td>
+      <td>
+      </td>
+    </tr>
+    {% endif %}
+
+        {% for sample in cohort.samples %}
+        <tr>
+          <td class="text-center">
+            {% if cohort.group == "singletons" and cohort.solved %}
+            <i class="fa fa-star text-success" data-toggle="tooltip" data-html="true" title="<p class='text-success font-weight-bold'>Solved</p><p>{{cohort.solved|e}}</p>"></i>
+            {% endif %}
+          </td>
+          <td class="text-center">
+            {% if sample in cohort.affecteds %}
+            <i class="fa fa-medkit"></i>
+            {% endif %}
+          </td>
+          <td class="text-center">
+            <i class="fa fa-lg fa-{{ 'male' if sample.sex=='MALE' else 'female' if sample.sex=='FEMALE' else 'question' }} text-{{'danger' if sample.sexstatus=='INCONSISTENT' else 'success' if sample.sexstatus=='CONSISTENT' else 'dark' }}" aria-hidden="true"
+             {% if sample.sex or sample.inferredsex %}data-toggle="tooltip" title="{{"stated " + sample.sex if sample.sex else "not stated"}}{{ ", inferred " + sample.inferredsex + " from X:Y coverage in " + sample.smrtcells|length|string + " SMRT Cells" if sample.inferredsex else ""}}" {% endif %}></i>
+          </td>
+          <td>
+            {% if cohort.group == "singletons" %}
+            <a href="./cohorts/{{ cohort.cohortid }}" {% if cohort.title %} data-toggle="tooltip" title="{{cohort.title|e}}" {% endif %}>{{sample.sampleid}}</a>
+            {% else %}
+            {{sample.sampleid}}
+            {% endif %}
+          </td>
+          <td>
+            {% for smrtcell in sample.smrtcells %}
+              <a href="./smrtcells/#{{cohort.cohortid}}"><i class="fa fa-microchip text-{{ 'dark' if smrtcell.hifiyield == 0 else 'success' if smrtcell.hifiyield > 2.5e10 else 'danger' if smrtcell.hifiyield < 2.25e10 else 'warning'}}"
+               data-toggle="tooltip" data-html="true" title="<div>{{smrtcell.moviename}}</div>{% if smrtcell.hifiyield > 0 %}<div class='text-{{'success' if smrtcell.hifiyield > 2.5e10 else 'danger' if smrtcell.hifiyield < 2.25e10 else 'warning'}}'>{{ (smrtcell.hifiyield/1e9)|round(1) }} Gb yield</div><div class='text-{{'success' if smrtcell.hifireadlength > 15000 else 'danger' if smrtcell.hifireadlength < 12000 else 'warning'}}'>{{(smrtcell.hifireadlength/1e3)|round(1)}} kb read length</div><div class='text-{{'success' if smrtcell.hifireadquality >= 30 else 'danger' if smrtcell.hifireadquality < 28 else 'warning'}}'>Q{{(smrtcell.hifireadquality)|round|int}} quality</div>{% if smrtcell.zmws > 0 %}<div class='border-top border-white mt-2 pt-2 text-{{'success' if smrtcell.p1/smrtcell.zmws > 0.6 else 'danger' if smrtcell.p1/smrtcell.zmws < 0.4 else 'warning'}}'>{{(100*smrtcell.p1/smrtcell.zmws)|round(0)|int}}% P1</div><div class='text-{{'success' if smrtcell.totalyield/smrtcell.p1 > 9e4 else 'danger' if smrtcell.totalyield/smrtcell.p1 < 8e4 else 'warning'}}'>{{(smrtcell.totalyield/smrtcell.p1/1e3)|round|int}} kb pol read length</div>{% endif %}{% else %}<div><i class='fa fa-spin fa-spinner'></i></div>{% endif %}"></i></a>
+            {% endfor %}
+          </td>
+          <td>
+            {% if sample.hifiyield %}
+              <div class="small border-right border-{{'success' if sample.hifiyield > 9e10 else 'dark' if  sample.processed_smrtcells < 3 else 'warning' if sample.hifiyield > 7.5e10 else 'danger'}}" style="border-width: 5px !important; display: inline-block; line-height: 1;">
+                <div class="pr-1 text-right text-dark text-bold bg-light border-left border-top border-bottom" style="min-width: {{ 70*sample.hifiyield/9e10|round|int }}px;">{{(sample.hifiyield/3e9)|round(1)}}&times;</div>
+              </div>
+            {% endif %}
+          </td>
+          <td>
+            {% if sample.gccoverage_dist|length > 0 %}
+               <small class="text-{{'success' if sample.gcbalance > 0.7 else 'danger' if sample.gcbalance < 0.5 else 'warning'}}">
+                <i class="fa fa-balance-scale"></i>
+                {{(100*sample.gcbalance)|round|int}}%
+               </small>
+            {% endif %}
+          </td>
+          <td>
+            {% if sample.kmerconsistent != "" %}
+            <i class="fa fa-id-card-o text-{{'danger' if sample.kmerconsistent=='INCONSISTENT' else 'success' if sample.kmerconsistent=='CONSISTENT' }}" aria-hidden="true"
+             data-toggle="tooltip" title="{{'Inc' if sample.kmerconsistent=='INCONSISTENT' else 'C' }}onsistent kmers suggest SMRT Cells are {{'not' if sample.kmerconsistent=='INCONSISTENT' else ''}} all from the same sample."></i>
+            {% endif %}
+            <!--{% if sample.confirmed %}
+            <i class="fa fa-check-circle-o text-success" data-toggle="tooltip" data-html="true" title="<div>Sample identity confirmed by external callset.</div><div class='mt-2 text-success'>{{ sample.confirmed }}</div>"></i>
+            {% endif %}-->
+          </td>
+          <td>
+            {% if sample.done %}<i class="fa fa-upload" data-toggle="tooltip" title="Sample data uploaded to cloud for sharing with project"></i>{% endif %}
+          </td>
+          <td>
+            {% if cohort.group == "singletons" and cohort.igv %}
+            <a class="small" href="http://100humansfs/cohorts/{{cohort.cohortid}}/{{cohort.cohortid}}_igv.xml">IGV</a>
+            {% endif %}
+          </td>
+          <td class="text-right">
+            {% if cohort.project != "control" %}
+            <div class="btn-group btn-group-sm">
+              <button type="button" class="btn btn-outline-primary dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                <i class="fa {{ 'fa-circle' if sample.runs else 'fa-circle-o'}}"></i> Runs
+              </button>
+              <div class="dropdown-menu dropdown-menu-right text-right">
+                {% for run in sample.runs %}
+                    {% if run.status == "COMPLETE" or run.status == "RUNNING" or run.status == "TERMINATED" %}
+                    <a class="dropdown-item small" href="https://smrtlink-100humans:8243/sl/run-qc/{{run.uuid}}">Open Run QC {{run.uuid[:8]}} ({{run.date[5:]}})</a>
+                    {% else %}
+                    <a class="dropdown-item small" href="https://smrtlink-100humans:8243/sl/run-design/{{run.uuid}}">Open Run Design {{run.uuid[:8]}} ({{run.date[5:]}})</a>
+                    {% endif %}
+                {% endfor %}
+                {% if sample.runs %}
+                <div class="dropdown-divider"></div>
+                {% endif %}
+                <a class="dropdown-item small" href="#" onclick='return showRunDesign("{{sample.sampleid}}", 3);'>Create run design CSV</a>
+              </div>
+            </div>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+    {% endif %}
+    {% endfor %}
+  </tbody>
+</table>
+
+<form style="display:none;" id="rundesign" action="http://100humans/mirror.php" method="POST">
+    <input type="text" name="filename" id="filename" value="">
+    <input type="text" name="filedata" id="filedata" value="">
+</form>
+<script type="text/javascript">
+    function showRunDesign(sample, smrtcells) {
+        $("#runDesignModalLabel").html("Create run design for <span class='text-primary'>" + sample + "</span>");
+        $("#primarySampleName").html(sample);
+        $("#lastSmrtcellSample").val(getCookie("lastSmrtcellSample") || "");
+        $("#sample").val(sample);
+        $("#smrtcells").val(smrtcells.toFixed());
+        $("#insertSize").val("20");
+        $("#oplc").val("25");
+        $("#initials").val(getCookie("initials") || "");
+        $("#instrument").val("");
+        $("#internalControl").prop("checked", true);
+        $("#runDesignModal").modal("show");
+    }
+
+    function runDesign() {
+        var now = new Date();
+        var wells = ["A","B","C","D"];
+
+        var sample = $("#sample").val();
+        var smrtcells = parseInt($("#smrtcells").val());
+        var lastSmrtcellSample= $("#lastSmrtcellSample").val().trim();
+        setCookie("lastSmrtcellSample", lastSmrtcellSample, 365);
+        var internalControl = !!$("#internalControl").prop("checked");
+        var insertSizeKb = parseFloat($("#insertSize").val());
+        var oplc = parseInt($("#oplc").val(), 10);
+        var initials = $("#initials").val().trim().toUpperCase().replace(/,/g, "");
+        setCookie("initials", initials, 365);
+        var instrument = $("#instrument").val().trim().toUpperCase().replace(/,/g,"");
+        var sizeSelection = $("#sizeSelection").val().trim().replace(/,/g,"");
+        $("#runDesignModal").modal("hide");
+
+        var result = [];
+
+        // Header row for CSV
+        var header = ["Experiment Name", "Experiment Id", "Experiment Description", "Run Name", "System Name", "Run Comments", "Is Collection",
+            "Sample Well", "Sample Name", "Sequencing Mode", "Movie Time per SMRT Cell (hours)", "Sample Comment", "Insert Size (bp)",
+            "On-Plate Loading Concentration (pM)", "Use Predictive Loading", "Loading Target (P1 + P2)", "Maximum Loading Time (hours)",
+            "Size Selection", "Template Prep Kit Box Barcode", "Binding Kit Box Barcode", "Sequencing Kit Box Barcode", "DNA Control Complex Box Barcode",
+            "Automation Parameters", "Generate CCS Data", "Sample is Barcoded", "Barcode Set", "Same Barcodes on Both Ends of Sequence",
+            "Barcode Name", "Bio Sample Name", "Pipeline Id", "Analysis Name", "Entry Points", "Task Options"];
+        result.push(header.join(","));
+
+
+        for (var ix=1; ix <= smrtcells + (lastSmrtcellSample == "" ? 0 : 1); ix++) {
+            var smrtcell = [];
+            for (var i = 0; i < header.length; i++) {
+                smrtcell[i] = "";
+            }
+
+            if (ix == 1) {
+                var YYYY = now.getFullYear().toString();
+                var MM = (1+now.getMonth()).toString();
+                var DD = now.getDate().toString();
+                if (MM.length == 1) { MM = "0" + MM; }
+                if (DD.length == 1) { DD = "0" + DD; }
+                smrtcell[3] = "100H_" + YYYY + "_" + MM + "_" + DD + "_" + (initials == "" ? "" : initials + "_") +
+                    sample + (lastSmrtcellSample == "" ? "" : "_" + lastSmrtcellSample) + (instrument == "" ? "" : "_" + instrument);
+                smrtcell[4] = "Sequel II";
+            }
+            smrtcell[6] = "TRUE";
+            smrtcell[7] = wells[ix-1] + "01";
+            smrtcell[8] = (ix <= smrtcells ? sample : lastSmrtcellSample);
+            smrtcell[9] = "CCS";
+            smrtcell[10] = "30";
+            smrtcell[11] = sizeSelection + (sizeSelection == "" ? "" : " to ") + insertSizeKb.toString() + " kb mode";
+            smrtcell[12] = (1000*insertSizeKb).toFixed(0);
+            smrtcell[13] = oplc.toFixed(0);
+            smrtcell[14] = "FALSE";
+            smrtcell[17] = "TRUE";
+            smrtcell[18] = "Lxxxxx100938900123199";
+            smrtcell[19] = "Lxxxxx101789500123199";
+            smrtcell[20] = "Lxxxxx101826100123199";
+            smrtcell[21] = (internalControl ? "Lxxxxx101717600123199" : "");
+            smrtcell[22] = "ExtensionTime=double:2|ExtendFirst=boolean:True";
+            smrtcell[23] = "TRUE";
+            smrtcell[24] = "FALSE";
+            smrtcell[28] = (ix <= smrtcells ? sample : lastSmrtcellSample);
+
+            result.push(smrtcell.join(","));
+        }
+        result = result.join("<EOL>");
+
+        $("#filename").val(sample + ".csv");
+        $("#filedata").val(result);
+        $("#rundesign").submit();
+
+        return false;
+    }
+</script>
+
+<div class="modal fade" id="runDesignModal" tabindex="-1" aria-labelledby="runDesignModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="runDesignModalLabel">Create Run Design CSV</h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <form>
+          <input type="hidden" id="sample" style="display: none;">
+          <div class="form-group row">
+            <label for="smrtcells" class="col-sm-5 col-form-label text-right font-weight-bold">SMRT Cells for <span id="primarySampleName"></span></label>
+            <div class="col-sm-3">
+                <input type="number" min="1" max="4" class="form-control" id="smrtcells" value="3" step="1">
+            </div>
+          </div>
+          <div class="form-group row">
+            <label for="lastSmrtcellSample" class="col-sm-5 col-form-label text-right font-weight-bold">+ 1 final SMRT Cell for</label>
+            <div class="col-sm-4">
+              <input class="form-control" id="lastSmrtcellSample" list="lastSmrtcellSamples" placeholder="select or enter other">
+              <datalist id="lastSmrtcellSamples">
+                {% for cohort in cohorts %}
+                {% for sample in cohort.samples %}
+                <option value="{{sample.sampleid}}">
+                {% endfor %}
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          <div class="form-group row">
+            <label for="internalControl" class="col-sm-5 col-form-label text-right font-weight-bold">Internal control</label>
+            <div class="col-sm-3">
+                <input type="checkbox" id="internalControl" checked style="width: 30px; height: 30px;">
+            </div>
+          </div>
+          <hr />
+          <div class="row">
+            <div class="col-sm-5">
+            </div>
+            <div class="col-sm-7">
+                <p class="small">The following fields only affect the run metadata (run name, OPLC, insert size, and comments).</p>
+            </div>
+          </div>
+          <div class="form-group row">
+            <label for="insertSize" class="col-sm-5 col-form-label text-right font-weight-bold">Insert size mode</label>
+            <div class="col-sm-4">
+                <div class="input-group">
+                  <input type="number" min="1" max="99" class="form-control" id="insertSize" value="20" step="0.1">
+                  <div class="input-group-append"><div class="input-group-text">kb</div></div>
+                </div>
+            </div>
+          </div>
+          <div class="form-group row">
+            <label for="oplc" class="col-sm-5 col-form-label text-right font-weight-bold">Loading concentration</label>
+            <div class="col-sm-4">
+                <div class="input-group">
+                  <input type="number" min="1" max="99" class="form-control" id="oplc" value="25" step="1">
+                  <div class="input-group-append"><div class="input-group-text">pM</div></div>
+                </div>
+            </div>
+          </div>
+          <div class="form-group row">
+            <label for="initials" class="col-sm-5 col-form-label text-right font-weight-bold">Your initials</label>
+            <div class="col-sm-3">
+              <input type="input" class="form-control" id="initials">
+            </div>
+          </div>
+          <div class="form-group row">
+            <label for="instrument" class="col-sm-5 col-form-label text-right font-weight-bold">Sequel II System</label>
+            <div class="col-sm-4">
+              <input class="form-control" id="instrument" list="sequelIISystems" placeholder="select or enter other">
+              <datalist id="sequelIISystems">
+                <option value="54086U">
+                <option value="54119U">
+                <option value="64011">
+                <option value="64012">
+                <option value="64168">
+                <option value="64169">
+                <option value="64171">
+                <option value="64174">
+                <option value="64180">
+                <option value="64181">
+                <option value="64182">
+                <option value="64190">
+                <option value="64191">
+              </select>
+            </div>
+          </div>
+          <div class="form-group row">
+            <label for="sizeSelection" class="col-sm-5 col-form-label text-right font-weight-bold">Size selection</label>
+            <div class="col-sm-4">
+              <input class="form-control" id="sizeSelection" list="sizeSelectionMethods" value="PippinHT 10 kb" placeholder="select or enter other">
+              <datalist id="sizeSelectionMethods">
+                <option value="PippinHT 10 kb">
+                <option value="PippinHT 15 kb">
+              </select>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick='return runDesign();'>Download CSV <i class="fa fa-download"></i></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
